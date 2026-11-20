@@ -68,6 +68,29 @@ export interface ContentPost {
   updatedAt: Date | string;
 }
 
+export interface SocialAccount {
+  id: string;
+  platform: PlatformType;
+  accountName: string;
+  accountIdentifier: string;
+  connectionStatus: string;
+  encryptedAccessToken?: string | null;
+  tokenExpiresAt?: Date | string | null;
+  lastSyncAt?: Date | string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface ContentPlatform {
+  id: string;
+  contentPostId: string;
+  socialAccountId: string;
+  socialAccount?: SocialAccount;
+  platformCaption?: string | null;
+  platformStatus: string;
+  externalPostId?: string | null;
+}
+
 export interface Approval {
   id: string;
   contentPostId: string;
