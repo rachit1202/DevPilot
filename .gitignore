@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Environment variables & secrets (CRITICAL: Never commit)
+.env
+.env.local
+.env.*.local
+*.env
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Database
+prisma/*.db
+prisma/*.db-journal
+
+# Local storage (user uploads and generated assets)
+storage/uploads/*
+!storage/uploads/.gitkeep
+storage/thumbnails/*
+!storage/thumbnails/.gitkeep
+
+# System & IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

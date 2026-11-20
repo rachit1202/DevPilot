@@ -1,0 +1,20 @@
+import { z } from 'zod';
+import { ContentType, ContentCategory, PostStatus } from '@devpilot/shared';
+
+export const createContentSchema = z.object({
+  title: z.string().trim().min(3, { message: 'Title must be at least 3 characters' }).max(200),
+  caption: z.string().trim().min(5, { message: 'Caption must be at least 5 characters' }),
+  hashtags: z.array(z.string().trim().regex(/^#[a-zA-Z0-9_]+$/, { message: 'Hashtag must start with # and contain no spaces' })).default([]),
+  cta: z.string().trim().max(300).optional().nullable(),
+  contentType: z.nativeEnum(ContentType).default(ContentType.SINGLE_IMAGE),
+  category: z.nativeEnum(ContentCategory).default(ContentCategory.WEB_DEV_TIPS),
+  mediaAssetIds: z.array(z.string().uuid()).default([]),
+  scheduledAt: z.string().datetime().optional().nullable(),
+});
+
+export const updateContentSchema = createContentSchema.partial().extend({
+  status: z.nativeEnum(PostStatus).optional(),
+});
+
+export type CreateContentInput = z.infer<typeof createContentSchema>;
+export type UpdateContentInput = z.infer<typeof updateContentSchema>;

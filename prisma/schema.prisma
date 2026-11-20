@@ -1,0 +1,250 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  EDITOR
+  APPROVER
+  ANALYST
+}
+
+enum ContentType {
+  SINGLE_IMAGE
+  CAROUSEL
+  REEL
+  STORY
+  MEME
+  BANNER
+  CODE_TIP
+  SHOWCASE
+}
+
+enum ContentCategory {
+  CODING_MEMES
+  DEVELOPER_LIFE
+  AI_VIBE_CODING
+  WEB_DEV_TIPS
+  PROGRAMMING_TUTORIALS
+  TECH_NEWS_TRENDS
+  TOOLS_RESOURCES
+  CODING_CHALLENGES
+  PROJECT_SHOWCASES
+  PORTFOLIO_SERVICE_PROMOTION
+}
+
+enum PostStatus {
+  IDEA
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  REJECTED
+  FAILED
+  ARCHIVED
+}
+
+enum PlatformType {
+  INSTAGRAM
+  FACEBOOK
+  WHATSAPP
+  X
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+model User {
+  id            String         @id @default(uuid()) @db.Uuid
+  name          String
+  email         String         @unique
+  passwordHash  String         @map("password_hash")
+  role          UserRole       @default(OWNER)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  createdPosts  ContentPost[]  @relation("PostCreator")
+  approvalsReq  Approval[]     @relation("ApprovalRequester")
+  approvalsRev  Approval[]     @relation("ApprovalReviewer")
+  activityLogs  ActivityLog[]
+
+  @@map("users")
+}
+
+model BrandSettings {
+  id              String         @id @default(uuid()) @db.Uuid
+  brandName       String         @default("CodeCulture") @map("brand_name")
+  tagline         String         @default("Code. Create. Build. Repeat.")
+  logoUrl         String?        @map("logo_url")
+  websiteUrl      String?        @map("website_url")
+  primaryColor    String         @default("#8B5CF6") @map("primary_color")
+  secondaryColor  String         @default("#06B6D4") @map("secondary_color")
+  tone            String         @default("Informative, modern, developer-friendly, humorous")
+  audience        String         @default("Web developers, students, freelancers, AI enthusiasts")
+  topics          String[]       @default(["Programming", "Web Dev", "AI", "Memes", "Tech Trends"])
+  avoidTopics     String[]       @default([]) @map("avoid_topics")
+  ctaDefaults     String?        @map("cta_defaults")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  posts           ContentPost[]
+
+  @@map("brand_settings")
+}
+
+model ContentPost {
+  id              String           @id @default(uuid()) @db.Uuid
+  title           String
+  caption         String           @db.Text
+  hashtags        String[]         @default([])
+  cta             String?
+  contentType     ContentType      @default(SINGLE_IMAGE) @map("content_type")
+  category        ContentCategory  @default(WEB_DEV_TIPS)
+  status          PostStatus       @default(DRAFT)
+  sourceType      String           @default("MANUAL") @map("source_type")
+  scheduledAt     DateTime?        @map("scheduled_at")
+  publishedAt     DateTime?        @map("published_at")
+
+  createdById     String           @db.Uuid @map("created_by_id")
+  createdBy       User             @relation("PostCreator", fields: [createdById], references: [id])
+
+  brandSettingsId String           @db.Uuid @map("brand_settings_id")
+  brandSettings   BrandSettings    @relation(fields: [brandSettingsId], references: [id])
+
+  mediaItems      ContentMedia[]
+  platformConfigs ContentPlatform[]
+  schedules       ContentSchedule[]
+  approvals       Approval[]
+
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([category])
+  @@index([contentType])
+  @@index([scheduledAt])
+  @@map("content_posts")
+}
+
+model MediaAsset {
+  id            String         @id @default(uuid()) @db.Uuid
+  fileName      String         @map("file_name")
+  originalName  String         @map("original_name")
+  mimeType      String         @map("mime_type")
+  fileSize      Int            @map("file_size")
+  filePath      String         @map("file_path")
+  width         Int?
+  height        Int?
+  duration      Float?
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  contentLinks  ContentMedia[]
+
+  @@map("media_assets")
+}
+
+model ContentMedia {
+  id            String         @id @default(uuid()) @db.Uuid
+  contentPostId String         @db.Uuid @map("content_post_id")
+  contentPost   ContentPost    @relation(fields: [contentPostId], references: [id], onDelete: Cascade)
+  mediaAssetId  String         @db.Uuid @map("media_asset_id")
+  mediaAsset    MediaAsset     @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+  position      Int            @default(0)
+
+  @@unique([contentPostId, mediaAssetId])
+  @@index([contentPostId])
+  @@map("content_media")
+}
+
+model SocialAccount {
+  id                   String            @id @default(uuid()) @db.Uuid
+  platform             PlatformType
+  accountName          String            @map("account_name")
+  accountIdentifier    String            @map("account_identifier")
+  connectionStatus     String            @default("DISCONNECTED") @map("connection_status")
+  encryptedAccessToken String?           @map("encrypted_access_token") @db.Text
+  tokenExpiresAt       DateTime?         @map("token_expires_at")
+  lastSyncAt           DateTime?         @map("last_sync_at")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+
+  platformPosts        ContentPlatform[]
+  schedules            ContentSchedule[]
+
+  @@map("social_accounts")
+}
+
+model ContentPlatform {
+  id              String         @id @default(uuid()) @db.Uuid
+  contentPostId   String         @db.Uuid @map("content_post_id")
+  contentPost     ContentPost    @relation(fields: [contentPostId], references: [id], onDelete: Cascade)
+  socialAccountId String         @db.Uuid @map("social_account_id")
+  socialAccount   SocialAccount  @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  platformCaption String?        @map("platform_caption") @db.Text
+  platformStatus  String         @default("PENDING") @map("platform_status")
+  externalPostId  String?        @map("external_post_id")
+
+  @@unique([contentPostId, socialAccountId])
+  @@map("content_platforms")
+}
+
+model ContentSchedule {
+  id              String         @id @default(uuid()) @db.Uuid
+  contentPostId   String         @db.Uuid @map("content_post_id")
+  contentPost     ContentPost    @relation(fields: [contentPostId], references: [id], onDelete: Cascade)
+  socialAccountId String?        @db.Uuid @map("social_account_id")
+  socialAccount   SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+  scheduledAt     DateTime       @map("scheduled_at")
+  status          String         @default("SCHEDULED")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@index([scheduledAt])
+  @@index([status])
+  @@map("content_schedules")
+}
+
+model Approval {
+  id            String         @id @default(uuid()) @db.Uuid
+  contentPostId String         @db.Uuid @map("content_post_id")
+  contentPost   ContentPost    @relation(fields: [contentPostId], references: [id], onDelete: Cascade)
+  requestedById String         @db.Uuid @map("requested_by_id")
+  requestedBy   User           @relation("ApprovalRequester", fields: [requestedById], references: [id])
+  reviewedById  String?        @db.Uuid @map("reviewed_by_id")
+  reviewedBy    User?          @relation("ApprovalReviewer", fields: [reviewedById], references: [id])
+  status        ApprovalStatus @default(PENDING)
+  comment       String?        @db.Text
+  reviewedAt    DateTime?      @map("reviewed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  @@index([contentPostId])
+  @@index([status])
+  @@map("approvals")
+}
+
+model ActivityLog {
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String?        @db.Uuid @map("user_id")
+  user        User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action      String
+  entityType  String         @map("entity_type")
+  entityId    String?        @map("entity_id")
+  metadata    Json?          @default("{}")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
