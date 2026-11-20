@@ -43,7 +43,13 @@ async function main() {
   // 2. Seed initial Owner user from environment
   const ownerEmail = process.env.INITIAL_OWNER_EMAIL || 'admin@codeculture.dev';
   const ownerName = process.env.INITIAL_OWNER_NAME || 'CodeCulture Admin';
-  const rawPassword = process.env.INITIAL_OWNER_PASSWORD || 'ChangeMeInLocalDev123!';
+  const rawPassword = process.env.INITIAL_OWNER_PASSWORD;
+
+  if (!rawPassword || rawPassword.trim().length < 8) {
+    throw new Error(
+      'Security requirement: INITIAL_OWNER_PASSWORD environment variable must be set in .env with at least 8 characters before running seed.'
+    );
+  }
 
   const existingOwner = await prisma.user.findUnique({
     where: { email: ownerEmail },
