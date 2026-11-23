@@ -16,5 +16,17 @@ export const updateContentSchema = createContentSchema.partial().extend({
   status: z.nativeEnum(PostStatus).optional(),
 });
 
+export const contentQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  status: z.nativeEnum(PostStatus).optional(),
+  contentType: z.nativeEnum(ContentType).optional(),
+  category: z.nativeEnum(ContentCategory).optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(10),
+  sortBy: z.enum(['createdAt', 'updatedAt', 'title', 'scheduledAt', 'status']).default('createdAt'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+
 export type CreateContentInput = z.infer<typeof createContentSchema>;
 export type UpdateContentInput = z.infer<typeof updateContentSchema>;
+export type ContentQueryInput = z.infer<typeof contentQuerySchema>;

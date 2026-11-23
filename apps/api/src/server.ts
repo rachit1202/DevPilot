@@ -4,12 +4,15 @@ import helmet from '@fastify/helmet';
 import fastifyCookie from '@fastify/cookie';
 import fastifyJwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
+import fastifyMultipart from '@fastify/multipart';
 
 import { config } from './config/env';
 import { errorHandler } from './middleware/error.handler';
 import { csrfProtection } from './middleware/csrf.guard';
 import { healthRoutes } from './modules/health/health.routes';
 import { authRoutes } from './modules/auth/auth.routes';
+import { contentRoutes } from './modules/content/content.routes';
+import { mediaRoutes } from './modules/media/media.routes';
 
 export function buildServer(): FastifyInstance {
   const server = fastify({
@@ -73,13 +76,21 @@ export function buildServer(): FastifyInstance {
     timeWindow: '1 minute',
   });
 
-  // 6. Centralized Error Handler
+  // 6. Multipart Form/File Upload Support
+  server.register(fastifyMultipart, {
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB limit per file
+      files: 1, // 1 file per upload request
+    },
+  });
+
+  // 7. Centralized Error Handler
   server.setErrorHandler(errorHandler);
 
-  // 7. CSRF Origin Hardening for Cookie-Authenticated State-Changing Requests
+  // 8. CSRF Origin Hardening for Cookie-Authenticated State-Changing Requests
   server.addHook('preHandler', csrfProtection);
 
-  // 8. Standard 404 Handler
+  // 9. Standard 404 Handler
   server.setNotFoundHandler((request, reply) => {
     reply.status(404).send({
       success: false,
@@ -88,11 +99,13 @@ export function buildServer(): FastifyInstance {
     });
   });
 
-  // 8. Register Modular API Routes (/api/v1)
+  // 10. Register Modular API Routes (/api/v1)
   server.register(
     async (v1) => {
       v1.register(healthRoutes);
       v1.register(authRoutes, { prefix: '/auth' });
+      v1.register(contentRoutes, { prefix: '/content' });
+      v1.register(mediaRoutes, { prefix: '/media' });
     },
     { prefix: '/api/v1' }
   );

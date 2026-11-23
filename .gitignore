@@ -29,6 +29,7 @@ storage/uploads/*
 !storage/uploads/.gitkeep
 storage/thumbnails/*
 !storage/thumbnails/.gitkeep
+apps/api/storage/
 
 # System & IDE files
 .DS_Store

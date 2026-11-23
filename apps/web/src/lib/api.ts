@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
 
 export class ApiError extends Error {
   status: number;
@@ -59,6 +59,41 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
       throw err;
     }
     const message = err instanceof Error ? err.message : 'Network error or backend is unavailable';
+    throw new ApiError(message, 0);
+  }
+}
+
+/**
+ * Handles multipart file uploads without setting Content-Type header manually
+ * (enabling the browser to automatically compute the boundary).
+ */
+export async function apiUpload<T>(endpoint: string, formData: FormData): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+    });
+
+    let responseData: any = null;
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      responseData = await response.json();
+    }
+
+    if (!response.ok) {
+      const errorMessage = responseData?.message || responseData?.error || `Upload failed with status ${response.status}`;
+      throw new ApiError(errorMessage, response.status, responseData);
+    }
+
+    return responseData as T;
+  } catch (err: unknown) {
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    const message = err instanceof Error ? err.message : 'Network error during file upload';
     throw new ApiError(message, 0);
   }
 }
