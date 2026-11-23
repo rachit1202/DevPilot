@@ -7,6 +7,7 @@ import rateLimit from '@fastify/rate-limit';
 
 import { config } from './config/env';
 import { errorHandler } from './middleware/error.handler';
+import { csrfProtection } from './middleware/csrf.guard';
 import { healthRoutes } from './modules/health/health.routes';
 import { authRoutes } from './modules/auth/auth.routes';
 
@@ -17,6 +18,20 @@ export function buildServer(): FastifyInstance {
       redact: ['req.headers.authorization', 'req.headers.cookie', 'req.body.password'],
     },
     trustProxy: true,
+  });
+
+  // Support empty JSON bodies gracefully (e.g. POST requests without payload)
+  server.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    const raw = typeof body === 'string' ? body : (body as Buffer)?.toString('utf8') || '';
+    if (!raw || raw.trim() === '') {
+      done(null, {});
+      return;
+    }
+    try {
+      done(null, JSON.parse(raw));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
   });
 
   // 1. Security Headers (Helmet)
@@ -53,7 +68,10 @@ export function buildServer(): FastifyInstance {
   // 6. Centralized Error Handler
   server.setErrorHandler(errorHandler);
 
-  // 7. Standard 404 Handler
+  // 7. CSRF Origin Hardening for Cookie-Authenticated State-Changing Requests
+  server.addHook('preHandler', csrfProtection);
+
+  // 8. Standard 404 Handler
   server.setNotFoundHandler((request, reply) => {
     reply.status(404).send({
       success: false,

@@ -21,12 +21,17 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
 
   const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
+  const requestHeaders: Record<string, string> = {
+    ...((headers as Record<string, string>) || {}),
+  };
+
+  if (data !== undefined) {
+    requestHeaders['Content-Type'] = 'application/json';
+  }
+
   const config: RequestInit = {
     ...customConfig,
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
+    headers: requestHeaders,
     credentials: 'include', // Mandated: Send HttpOnly session cookie automatically
   };
 

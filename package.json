@@ -14,9 +14,11 @@
     "db:seed": "node --env-file=.env ./node_modules/ts-node/dist/bin.js --transpile-only prisma/seed.ts",
     "db:studio": "prisma studio",
     "lint": "npm run --workspaces --if-present lint",
+    "test:e2e": "playwright test",
     "typecheck": "npm run --workspaces --if-present typecheck"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^20.14.0",
     "prisma": "^5.14.0",
     "ts-node": "^10.9.2",

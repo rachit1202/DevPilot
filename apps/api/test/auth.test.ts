@@ -7,7 +7,7 @@ import { FastifyReply, FastifyRequest } from 'fastify';
 
 async function runTests() {
   console.log('\n========================================');
-  console.log('  DevPilot Milestone 1.2 Test Suite');
+  console.log('  DevPilot Milestone 1.2 & 1.3.2 Test Suite');
   console.log('========================================\n');
 
   const server = buildServer();
@@ -32,6 +32,7 @@ async function runTests() {
   // Retrieve seed owner credentials from environment
   const ownerEmail = process.env.INITIAL_OWNER_EMAIL || 'admin@codeculture.dev';
   const ownerPassword = process.env.INITIAL_OWNER_PASSWORD || 'ChangeMeInLocalDev123!';
+  const frontendOrigin = 'http://localhost:3000';
 
   // Helper variables for multi-step tests
   let authCookie = '';
@@ -42,7 +43,7 @@ async function runTests() {
     assert.ok(server, 'Server instance should exist');
   });
 
-  // 2. Test Health Endpoint
+  // 2. Health Endpoint
   await test('2. Health endpoint responds with 200 OK and valid payload', async () => {
     const res = await server.inject({
       method: 'GET',
@@ -57,11 +58,14 @@ async function runTests() {
     assert.ok(typeof body.data.uptime === 'number');
   });
 
-  // 3. Test Valid Owner Login
+  // 3. Valid Owner Login with legitimate Origin
   await test('3. Valid Owner login succeeds and sets HttpOnly cookie', async () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/auth/login',
+      headers: {
+        origin: frontendOrigin,
+      },
       payload: {
         email: ownerEmail,
         password: ownerPassword,
@@ -87,11 +91,12 @@ async function runTests() {
     authCookie = cookieHeader.split(';')[0];
   });
 
-  // 4. Test Invalid Password
+  // 4. Invalid Password
   await test('4. Invalid password is rejected safely with 401', async () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/auth/login',
+      headers: { origin: frontendOrigin },
       payload: {
         email: ownerEmail,
         password: 'CompletelyWrongPassword123!',
@@ -105,11 +110,12 @@ async function runTests() {
     assert.equal(body.message, 'Invalid email or password.');
   });
 
-  // 5. Test Unknown Email
+  // 5. Unknown Email
   await test('5. Unknown email is rejected safely with generic 401 message', async () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/auth/login',
+      headers: { origin: frontendOrigin },
       payload: {
         email: 'nonexistent-user@example.com',
         password: 'SomePassword123!',
@@ -123,11 +129,12 @@ async function runTests() {
     assert.equal(body.message, 'Invalid email or password.', 'Must not disclose email existence');
   });
 
-  // 6. Test Missing Credentials
+  // 6. Missing Credentials
   await test('6. Missing credentials are rejected with 400 Bad Request', async () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/auth/login',
+      headers: { origin: frontendOrigin },
       payload: {},
     });
 
@@ -138,7 +145,7 @@ async function runTests() {
     assert.ok(Array.isArray(body.issues));
   });
 
-  // 7. Test Authenticated /auth/me
+  // 7. Authenticated /auth/me
   await test('7. Authenticated /auth/me returns current user profile', async () => {
     // Test with Cookie
     const resCookie = await server.inject({
@@ -167,7 +174,7 @@ async function runTests() {
     assert.equal(resBearer.statusCode, 200);
   });
 
-  // 8. Test Unauthenticated /auth/me
+  // 8. Unauthenticated /auth/me
   await test('8. Unauthenticated /auth/me returns 401 Unauthorized', async () => {
     const res = await server.inject({
       method: 'GET',
@@ -180,13 +187,62 @@ async function runTests() {
     assert.equal(body.error, 'Unauthorized');
   });
 
-  // 9. Test Logout Clears Cookie
-  await test('9. Logout clears authentication cookie and returns 200 OK', async () => {
+  // 9. CSRF Hardening: Reject Unauthorized Origin on Mutating Cookie Request
+  await test('9. CSRF Hardening: Malicious origin with cookie is blocked with 403 Forbidden', async () => {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/auth/logout',
       headers: {
         cookie: authCookie,
+        origin: 'http://malicious-attacker.com',
+      },
+    });
+
+    assert.equal(res.statusCode, 403);
+    const body = JSON.parse(res.body);
+    assert.equal(body.error, 'Forbidden');
+    assert.match(body.message, /CSRF protection/i);
+  });
+
+  // 10. CSRF Hardening: Reject Missing Origin on Mutating Cookie Request
+  await test('10. CSRF Hardening: Missing Origin and Referer on cookie request is blocked with 403', async () => {
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/auth/logout',
+      headers: {
+        cookie: authCookie,
+        // No origin, no referer
+      },
+    });
+
+    assert.equal(res.statusCode, 403);
+    const body = JSON.parse(res.body);
+    assert.equal(body.error, 'Forbidden');
+    assert.match(body.message, /CSRF protection/i);
+  });
+
+  // 11. CSRF Exemption for Programmatic Bearer Tokens
+  await test('11. CSRF Exemption: Programmatic Bearer token request bypasses origin check safely', async () => {
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/auth/logout',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+        origin: 'http://external-api-tool.local',
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+  });
+
+  // 12. Logout Clears Cookie with Legitimate Origin
+  await test('12. Legitimate Logout clears authentication cookie and returns 200 OK', async () => {
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/auth/logout',
+      headers: {
+        cookie: authCookie,
+        origin: frontendOrigin,
       },
     });
 
@@ -201,8 +257,8 @@ async function runTests() {
     assert.match(cookieHeader, /access_token=;/, 'access_token should be cleared/expired');
   });
 
-  // 10. Test Protected Routes and Role Guard
-  await test('10. Role-based guards allow authorized role and reject unauthorized role', async () => {
+  // 13. Role-Based Guards
+  await test('13. Role-based guards allow authorized role and reject unauthorized role', async () => {
     let forbiddenCalled = false;
     let forbiddenPayload: Record<string, unknown> = {};
 
@@ -218,7 +274,6 @@ async function runTests() {
       },
     } as unknown as FastifyReply;
 
-    // Test: Owner user attempting to access ADMIN-only resource
     const mockRequestOwner = {
       user: {
         id: 'user-1',
@@ -233,7 +288,6 @@ async function runTests() {
     assert.equal(forbiddenCalled, true, 'Should block OWNER from ADMIN-only route');
     assert.equal(forbiddenPayload.error, 'Forbidden');
 
-    // Test: Owner user attempting to access OWNER or ADMIN resource
     let allowedPassed = true;
     const mockReplyAllowed = {
       status: () => {
@@ -247,8 +301,8 @@ async function runTests() {
     assert.equal(allowedPassed, true, 'Should allow OWNER through OWNER guard');
   });
 
-  // 11. Test Activity Logging in Database
-  await test('11. Activity logs are recorded in database for login, logout, and failed attempts', async () => {
+  // 14. Activity Logging in Database
+  await test('14. Activity logs are recorded in database for login, logout, and failed attempts', async () => {
     const recentLogs = await prisma.activityLog.findMany({
       orderBy: { createdAt: 'desc' },
       take: 10,
@@ -259,20 +313,20 @@ async function runTests() {
     assert.ok(actions.includes('USER_LOGOUT'), 'Should contain USER_LOGOUT log');
     assert.ok(actions.includes('LOGIN_FAILED'), 'Should contain LOGIN_FAILED log');
 
-    // Verify metadata does not leak passwords
     for (const log of recentLogs) {
       const metaStr = JSON.stringify(log.metadata || {});
       assert.doesNotMatch(metaStr, /"password":\s*"(?!\[REDACTED\])[^"]+"/, 'No plaintext password in metadata');
     }
   });
 
-  // 12. Test Login Rate Limiter
-  await test('12. Login rate limiting blocks abusive attempts with 429 Too Many Requests', async () => {
+  // 15. Login Rate Limiter
+  await test('15. Login rate limiting blocks abusive attempts with 429 Too Many Requests', async () => {
     let rateLimited = false;
     for (let i = 0; i < 15; i++) {
       const res = await server.inject({
         method: 'POST',
         url: '/api/v1/auth/login',
+        headers: { origin: frontendOrigin },
         payload: {
           email: 'abusive-attempt@example.com',
           password: 'wrongpassword',
