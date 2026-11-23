@@ -11,7 +11,7 @@
     "build": "npm run --workspaces --if-present build",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:seed": "ts-node --transpile-only prisma/seed.ts",
+    "db:seed": "node --env-file=.env ./node_modules/ts-node/dist/bin.js --transpile-only prisma/seed.ts",
     "db:studio": "prisma studio",
     "lint": "npm run --workspaces --if-present lint",
     "typecheck": "npm run --workspaces --if-present typecheck"
@@ -23,6 +23,8 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@prisma/client": "^5.14.0"
+    "@prisma/client": "^5.14.0",
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.3"
   }
 }
