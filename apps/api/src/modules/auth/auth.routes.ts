@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { AuthController } from './auth.controller';
 import { authGuard } from '../../middleware/auth.guard';
+import { config } from '../../config/env';
 
 export async function authRoutes(server: FastifyInstance) {
   // POST /auth/login (with dedicated rate limit)
@@ -9,7 +10,7 @@ export async function authRoutes(server: FastifyInstance) {
     {
       config: {
         rateLimit: {
-          max: 10,
+          max: config.NODE_ENV === 'production' ? 10 : 100,
           timeWindow: '1 minute',
         },
       },

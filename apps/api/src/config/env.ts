@@ -9,6 +9,7 @@ const envSchema = z.object({
   WEB_URL: z.string().url().default('http://localhost:3000'),
   API_URL: z.string().url().default('http://localhost:4000'),
   UPLOAD_DIR: z.string().default('./storage/uploads'),
+  APP_TIMEZONE: z.string().default('Asia/Kolkata'),
 });
 
 const parsed = envSchema.safeParse(process.env);

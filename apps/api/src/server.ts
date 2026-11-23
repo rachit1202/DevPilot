@@ -13,6 +13,7 @@ import { healthRoutes } from './modules/health/health.routes';
 import { authRoutes } from './modules/auth/auth.routes';
 import { contentRoutes } from './modules/content/content.routes';
 import { mediaRoutes } from './modules/media/media.routes';
+import { calendarRoutes } from './modules/calendar/calendar.routes';
 
 export function buildServer(): FastifyInstance {
   const server = fastify({
@@ -106,6 +107,7 @@ export function buildServer(): FastifyInstance {
       v1.register(authRoutes, { prefix: '/auth' });
       v1.register(contentRoutes, { prefix: '/content' });
       v1.register(mediaRoutes, { prefix: '/media' });
+      v1.register(calendarRoutes, { prefix: '/calendar' });
     },
     { prefix: '/api/v1' }
   );

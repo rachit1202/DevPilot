@@ -264,11 +264,15 @@ export class ContentService {
 
     let targetStatus = input.status !== undefined ? input.status : existing.status;
     let approvalInvalidated = false;
+    let cancelActiveSchedules = false;
 
-    if (existing.status === PostStatus.APPROVED && hasContentChanged) {
-      // Revert status to DRAFT to require fresh review
+    if ((existing.status === PostStatus.APPROVED || existing.status === PostStatus.SCHEDULED) && hasContentChanged) {
+      // Revert status to DRAFT to require fresh review, cancel active schedules
       targetStatus = input.status !== undefined ? input.status : PostStatus.DRAFT;
       approvalInvalidated = true;
+      if (existing.status === PostStatus.SCHEDULED) {
+        cancelActiveSchedules = true;
+      }
     }
 
     // 4. Verify referenced media assets if updating media
@@ -309,6 +313,15 @@ export class ContentService {
       if (input.contentType !== undefined) updateData.contentType = input.contentType;
       if (input.category !== undefined) updateData.category = input.category;
       if (targetStatus !== undefined) updateData.status = targetStatus;
+
+      // Invalidate active schedules if post was modified from SCHEDULED/APPROVED state
+      if (cancelActiveSchedules) {
+        updateData.scheduledAt = null;
+        await tx.contentSchedule.updateMany({
+          where: { contentPostId: id, status: 'SCHEDULED' },
+          data: { status: 'CANCELLED' },
+        });
+      }
 
       const updated = await tx.contentPost.update({
         where: { id },
