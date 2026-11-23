@@ -10,6 +10,7 @@ const envSchema = z.object({
   API_URL: z.string().url().default('http://localhost:4000'),
   UPLOAD_DIR: z.string().default('./storage/uploads'),
   APP_TIMEZONE: z.string().default('Asia/Kolkata'),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().default(10),
 });
 
 const parsed = envSchema.safeParse(process.env);

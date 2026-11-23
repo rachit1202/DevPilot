@@ -31,6 +31,42 @@ import {
 
 export type CalendarViewMode = 'month' | 'week' | 'day' | 'list';
 
+export const APP_TIMEZONE = 'Asia/Kolkata';
+const KOLKATA_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+
+export function kolkataToUtc(
+  year: number,
+  month: number, // 1-indexed (1-12)
+  day: number,
+  hours = 0,
+  minutes = 0,
+  seconds = 0,
+  ms = 0
+): Date {
+  return new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds, ms) - KOLKATA_OFFSET_MS);
+}
+
+export function formatToKolkataDateStr(dateOrIso: Date | string): string {
+  const d = typeof dateOrIso === 'string' ? new Date(dateOrIso) : dateOrIso;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+export function parseKolkataDateTimeInput(dtStr: string): Date {
+  const [dPart, tPart] = dtStr.split('T');
+  const [y, m, d] = dPart.split('-').map(Number);
+  const [hh, mm] = (tPart || '00:00').split(':').map(Number);
+  return kolkataToUtc(y, m, d, hh, mm, 0, 0);
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
 export interface CalendarEntry {
   id: string; // scheduleId
   contentPostId: string;
@@ -107,35 +143,36 @@ export default function ContentCalendarPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Calculate Date Ranges based on viewMode and currentDate
+  // Calculate Date Ranges based on viewMode and currentDate in Asia/Kolkata timezone
   const dateRange = useMemo(() => {
     const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
+    const month = currentDate.getMonth() + 1; // 1-indexed
 
     if (viewMode === 'month') {
-      const start = new Date(Date.UTC(year, month, 1, 0, 0, 0));
-      const end = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59));
+      const firstDayIndex = new Date(year, month - 1, 1).getDay(); // 0 is Sunday
+      const daysInMonth = new Date(year, month, 0).getDate();
+      const remaining = (7 - ((firstDayIndex + daysInMonth) % 7)) % 7;
+      // Start from leading grid cell local midnight IST converted to UTC
+      const start = kolkataToUtc(year, month, 1 - firstDayIndex, 0, 0, 0, 0);
+      // End at trailing grid cell local end-of-day IST converted to UTC
+      const end = kolkataToUtc(year, month, daysInMonth + remaining, 23, 59, 59, 999);
       return { start, end };
     } else if (viewMode === 'week') {
       const curr = new Date(currentDate);
       const day = curr.getDay(); // 0 is Sunday
       const diff = curr.getDate() - day; // start on Sunday
-      const start = new Date(curr.setDate(diff));
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(start);
-      end.setDate(start.getDate() + 6);
-      end.setHours(23, 59, 59, 999);
+      const sunday = new Date(curr.setDate(diff));
+      const start = kolkataToUtc(sunday.getFullYear(), sunday.getMonth() + 1, sunday.getDate(), 0, 0, 0, 0);
+      const end = kolkataToUtc(sunday.getFullYear(), sunday.getMonth() + 1, sunday.getDate() + 6, 23, 59, 59, 999);
       return { start, end };
     } else if (viewMode === 'day') {
-      const start = new Date(currentDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(currentDate);
-      end.setHours(23, 59, 59, 999);
+      const start = kolkataToUtc(currentDate.getFullYear(), currentDate.getMonth() + 1, currentDate.getDate(), 0, 0, 0, 0);
+      const end = kolkataToUtc(currentDate.getFullYear(), currentDate.getMonth() + 1, currentDate.getDate(), 23, 59, 59, 999);
       return { start, end };
     } else {
-      // List view: 30 days window from start of current month
-      const start = new Date(Date.UTC(year, month, 1, 0, 0, 0));
-      const end = new Date(Date.UTC(year, month + 2, 0, 23, 59, 59));
+      // List view: 60-day window from start of current month
+      const start = kolkataToUtc(year, month, 1, 0, 0, 0, 0);
+      const end = kolkataToUtc(year, month + 2, 0, 23, 59, 59, 999);
       return { start, end };
     }
   }, [currentDate, viewMode]);
@@ -206,29 +243,27 @@ export default function ContentCalendarPage() {
     }
   }, []);
 
-  // Open Schedule Modal with default date (tomorrow at 10:00 AM)
+  // Open Schedule Modal with default date (tomorrow at 10:00 AM IST)
   const openScheduleModal = (presetDate?: Date) => {
     fetchApprovedPosts();
     const target = presetDate || new Date(Date.now() + 24 * 60 * 60 * 1000);
-    // Format YYYY-MM-DDTHH:MM for datetime-local input
-    const year = target.getFullYear();
-    const month = String(target.getMonth() + 1).padStart(2, '0');
-    const day = String(target.getDate()).padStart(2, '0');
-    setScheduleDateTime(`${year}-${month}-${day}T10:00`);
+    const dateStr = formatToKolkataDateStr(target);
+    setScheduleDateTime(`${dateStr}T10:00`);
     setFormError(null);
     setShowScheduleModal(true);
   };
 
-  // Open Reschedule Modal
+  // Open Reschedule Modal with existing scheduled date in Asia/Kolkata
   const openRescheduleModal = (entry: CalendarEntry) => {
     setSelectedSchedule(entry);
-    const existingDate = new Date(entry.scheduledAt);
-    const year = existingDate.getFullYear();
-    const month = String(existingDate.getMonth() + 1).padStart(2, '0');
-    const day = String(existingDate.getDate()).padStart(2, '0');
-    const hours = String(existingDate.getHours()).padStart(2, '0');
-    const minutes = String(existingDate.getMinutes()).padStart(2, '0');
-    setScheduleDateTime(`${year}-${month}-${day}T${hours}:${minutes}`);
+    const dateStr = formatToKolkataDateStr(entry.scheduledAt);
+    const timeStr = new Intl.DateTimeFormat('en-GB', {
+      timeZone: APP_TIMEZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(entry.scheduledAt));
+    setScheduleDateTime(`${dateStr}T${timeStr}`);
     setFormError(null);
     setShowRescheduleModal(true);
   };
@@ -245,7 +280,11 @@ export default function ContentCalendarPage() {
       return;
     }
 
-    const scheduledDate = new Date(scheduleDateTime);
+    const scheduledDate = parseKolkataDateTimeInput(scheduleDateTime);
+    if (isNaN(scheduledDate.getTime())) {
+      setFormError('Please select a valid scheduled date and time.');
+      return;
+    }
     if (scheduledDate.getTime() <= Date.now()) {
       setFormError('Scheduled date and time must be in the future.');
       return;
@@ -280,7 +319,11 @@ export default function ContentCalendarPage() {
     e.preventDefault();
     if (!selectedSchedule) return;
 
-    const newDate = new Date(scheduleDateTime);
+    const newDate = parseKolkataDateTimeInput(scheduleDateTime);
+    if (isNaN(newDate.getTime())) {
+      setFormError('Please select a valid rescheduled date and time.');
+      return;
+    }
     if (newDate.getTime() <= Date.now()) {
       setFormError('Rescheduled date and time must be in the future.');
       return;
@@ -380,15 +423,15 @@ export default function ContentCalendarPage() {
   // Period title label for header
   const periodTitle = useMemo(() => {
     if (viewMode === 'month') {
-      return currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      return new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, month: 'long', year: 'numeric' }).format(currentDate);
     } else if (viewMode === 'week') {
-      const s = dateRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const e = dateRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const s = new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, month: 'short', day: 'numeric' }).format(dateRange.start);
+      const e = new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, month: 'short', day: 'numeric', year: 'numeric' }).format(dateRange.end);
       return `${s} – ${e}`;
     } else if (viewMode === 'day') {
-      return currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      return new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(currentDate);
     } else {
-      return `Upcoming Slots: ${currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+      return `Upcoming Slots: ${new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, month: 'long', year: 'numeric' }).format(currentDate)}`;
     }
   }, [viewMode, currentDate, dateRange]);
 
@@ -404,15 +447,17 @@ export default function ContentCalendarPage() {
     // Leading days from previous month
     const prevMonthDays = new Date(year, month, 0).getDate();
     for (let i = firstDayIndex - 1; i >= 0; i--) {
-      const d = new Date(year, month - 1, prevMonthDays - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dayNum = prevMonthDays - i;
+      const d = new Date(year, month - 1, dayNum);
+      const prevDate = new Date(year, month - 1, dayNum);
+      const dateStr = `${prevDate.getFullYear()}-${pad(prevDate.getMonth() + 1)}-${pad(dayNum)}`;
       days.push({ date: d, dateStr, isCurrentMonth: false });
     }
 
     // Days in current month
     for (let i = 1; i <= daysInMonth; i++) {
       const d = new Date(year, month, i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = `${year}-${pad(month + 1)}-${pad(i)}`;
       days.push({ date: d, dateStr, isCurrentMonth: true });
     }
 
@@ -420,7 +465,8 @@ export default function ContentCalendarPage() {
     const remaining = (7 - (days.length % 7)) % 7;
     for (let i = 1; i <= remaining; i++) {
       const d = new Date(year, month + 1, i);
-      const dateStr = d.toISOString().split('T')[0];
+      const nextDate = new Date(year, month + 1, i);
+      const dateStr = `${nextDate.getFullYear()}-${pad(nextDate.getMonth() + 1)}-${pad(i)}`;
       days.push({ date: d, dateStr, isCurrentMonth: false });
     }
 
@@ -626,11 +672,11 @@ export default function ContentCalendarPage() {
               <div className="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-devpilot-border">
                 {monthDays.map(({ date, dateStr, isCurrentMonth }, idx) => {
                   const dayEntries = entries.filter((e) => {
-                    const entryDate = new Date(e.scheduledAt).toISOString().split('T')[0];
+                    const entryDate = formatToKolkataDateStr(e.scheduledAt);
                     return entryDate === dateStr;
                   });
 
-                  const isToday = new Date().toISOString().split('T')[0] === dateStr;
+                  const isToday = formatToKolkataDateStr(new Date()) === dateStr;
 
                   return (
                     <div
@@ -675,7 +721,7 @@ export default function ContentCalendarPage() {
                               {entry.post.title}
                             </span>
                             <span className="text-[9px] text-devpilot-subtle font-mono shrink-0">
-                              {new Date(entry.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {new Intl.DateTimeFormat('en-IN', { timeZone: APP_TIMEZONE, hour: '2-digit', minute: '2-digit' }).format(new Date(entry.scheduledAt))}
                             </span>
                           </div>
                         ))}
@@ -692,13 +738,12 @@ export default function ContentCalendarPage() {
             <div className="rounded-2xl border border-devpilot-border bg-devpilot-card overflow-hidden shadow-xl">
               <div className="grid grid-cols-7 divide-x divide-devpilot-border">
                 {Array.from({ length: 7 }).map((_, idx) => {
-                  const d = new Date(dateRange.start);
-                  d.setDate(d.getDate() + idx);
-                  const dateStr = d.toISOString().split('T')[0];
-                  const isToday = new Date().toISOString().split('T')[0] === dateStr;
+                  const dayDate = new Date(dateRange.start.getTime() + idx * 24 * 60 * 60 * 1000 + 1000);
+                  const dateStr = formatToKolkataDateStr(dayDate);
+                  const isToday = formatToKolkataDateStr(new Date()) === dateStr;
 
                   const dayEntries = entries.filter((e) => {
-                    return new Date(e.scheduledAt).toISOString().split('T')[0] === dateStr;
+                    return formatToKolkataDateStr(e.scheduledAt) === dateStr;
                   });
 
                   return (
@@ -706,10 +751,10 @@ export default function ContentCalendarPage() {
                       {/* Week Column Header */}
                       <div className={`p-2.5 text-center border-b border-devpilot-border ${isToday ? 'bg-devpilot-purple/10' : 'bg-black/30'}`}>
                         <div className="text-[10px] font-semibold text-devpilot-muted uppercase">
-                          {d.toLocaleDateString('en-US', { weekday: 'short' })}
+                          {new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, weekday: 'short' }).format(dayDate)}
                         </div>
                         <div className={`text-sm font-bold mt-0.5 ${isToday ? 'text-devpilot-purple' : 'text-devpilot-text'}`}>
-                          {d.getDate()}
+                          {new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, day: 'numeric' }).format(dayDate)}
                         </div>
                       </div>
 
@@ -729,7 +774,7 @@ export default function ContentCalendarPage() {
                               <div className="flex items-center justify-between text-[10px] text-devpilot-cyan font-mono">
                                 <span className="flex items-center gap-1">
                                   <Clock className="w-3 h-3" />
-                                  {new Date(entry.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  {new Intl.DateTimeFormat('en-IN', { timeZone: APP_TIMEZONE, hour: '2-digit', minute: '2-digit' }).format(new Date(entry.scheduledAt))}
                                 </span>
                                 <Badge variant="cyan" className="text-[9px] px-1 py-0">
                                   {formatContentType(entry.post.contentType)}
@@ -766,7 +811,7 @@ export default function ContentCalendarPage() {
               <div className="flex items-center justify-between pb-4 border-b border-devpilot-border">
                 <div>
                   <h3 className="text-base font-bold text-devpilot-text">
-                    Daily Schedule: {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                    Daily Schedule: {new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(currentDate)}
                   </h3>
                   <p className="text-xs text-devpilot-muted mt-0.5">
                     {entries.length} publishing slot(s) scheduled for this date
@@ -794,7 +839,7 @@ export default function ContentCalendarPage() {
                         <div className="flex items-center justify-between">
                           <span className="flex items-center gap-1.5 text-xs text-devpilot-cyan font-mono font-medium">
                             <Clock className="w-3.5 h-3.5" />
-                            {new Date(entry.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {new Intl.DateTimeFormat('en-IN', { timeZone: APP_TIMEZONE, hour: '2-digit', minute: '2-digit' }).format(new Date(entry.scheduledAt))}
                           </span>
                           <Badge variant="purple" className="text-[10px]">
                             {formatContentType(entry.post.contentType)}
@@ -1267,7 +1312,7 @@ export default function ContentCalendarPage() {
             <div className="space-y-1 pt-3 border-t border-devpilot-border text-xs text-devpilot-subtle">
               <div className="flex items-center justify-between">
                 <span>Author: {viewingEntry.post.createdBy?.name || 'Owner'}</span>
-                <span>Created: {new Date(viewingEntry.createdAt).toLocaleDateString()}</span>
+                <span>Created: {new Intl.DateTimeFormat('en-IN', { timeZone: APP_TIMEZONE, dateStyle: 'medium' }).format(new Date(viewingEntry.createdAt))}</span>
               </div>
               {viewingEntry.post.approval && (
                 <div className="flex items-center justify-between text-emerald-400">

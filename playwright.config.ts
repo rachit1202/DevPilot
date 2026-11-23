@@ -48,6 +48,9 @@ export default defineConfig({
       command: 'node --env-file=.env apps/api/dist/index.js',
       url: 'http://localhost:4000/api/v1/health',
       reuseExistingServer: !process.env.CI,
+      env: {
+        AUTH_RATE_LIMIT_MAX: '100',
+      },
       stdout: 'pipe',
       stderr: 'pipe',
       timeout: 30000,

@@ -166,54 +166,61 @@ export class CalendarService {
       throw new Error('DUPLICATE_SCHEDULE: Post already has an active schedule. Use reschedule or cancel existing schedule first.');
     }
 
-    return await prisma.$transaction(async (tx) => {
-      // 1. Create ContentSchedule record
-      const schedule = await tx.contentSchedule.create({
-        data: {
-          contentPostId: post.id,
-          scheduledAt: scheduledDate,
-          status: 'SCHEDULED',
-        },
-      });
-
-      // 2. Transition post from APPROVED to SCHEDULED
-      const updatedPost = await tx.contentPost.update({
-        where: { id: post.id },
-        data: {
-          status: PostStatus.SCHEDULED,
-          scheduledAt: scheduledDate,
-        },
-        include: {
-          mediaItems: {
-            include: { mediaAsset: true },
-            orderBy: { position: 'asc' },
+    try {
+      return await prisma.$transaction(async (tx) => {
+        // 1. Create ContentSchedule record
+        const schedule = await tx.contentSchedule.create({
+          data: {
+            contentPostId: post.id,
+            scheduledAt: scheduledDate,
+            status: 'SCHEDULED',
           },
-          createdBy: {
-            select: { id: true, name: true, role: true },
+        });
+
+        // 2. Transition post from APPROVED to SCHEDULED
+        const updatedPost = await tx.contentPost.update({
+          where: { id: post.id },
+          data: {
+            status: PostStatus.SCHEDULED,
+            scheduledAt: scheduledDate,
           },
-        },
-      });
+          include: {
+            mediaItems: {
+              include: { mediaAsset: true },
+              orderBy: { position: 'asc' },
+            },
+            createdBy: {
+              select: { id: true, name: true, role: true },
+            },
+          },
+        });
 
-      // 3. Log audit activity
-      await ActivityService.log({
-        tx,
-        userId: user.id,
-        action: 'CONTENT_SCHEDULED',
-        entityType: 'CONTENT_SCHEDULE',
-        entityId: schedule.id,
-        metadata: {
-          contentPostId: post.id,
-          title: post.title,
-          scheduledAt: schedule.scheduledAt.toISOString(),
-          timezone: config.APP_TIMEZONE,
-        },
-      });
+        // 3. Log audit activity
+        await ActivityService.log({
+          tx,
+          userId: user.id,
+          action: 'CONTENT_SCHEDULED',
+          entityType: 'CONTENT_SCHEDULE',
+          entityId: schedule.id,
+          metadata: {
+            contentPostId: post.id,
+            title: post.title,
+            scheduledAt: schedule.scheduledAt.toISOString(),
+            timezone: config.APP_TIMEZONE,
+          },
+        });
 
-      return {
-        schedule,
-        post: updatedPost,
-      };
-    });
+        return {
+          schedule,
+          post: updatedPost,
+        };
+      });
+    } catch (err: unknown) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new Error('DUPLICATE_SCHEDULE: Post already has an active schedule. Use reschedule or cancel existing schedule first.');
+      }
+      throw err;
+    }
   }
 
   /**
@@ -314,6 +321,16 @@ export class CalendarService {
     const isOwnerOrAdmin = user.role === UserRole.OWNER || user.role === UserRole.ADMIN;
     if (!isOwnerOrAdmin && schedule.contentPost.createdById !== user.id) {
       throw new Error('FORBIDDEN: You do not have permission to cancel schedules for content created by another user.');
+    }
+
+    // Cancellation is idempotent: if schedule is already CANCELLED, return current state without emitting duplicate activity logs
+    if (schedule.status === 'CANCELLED') {
+      return {
+        success: true,
+        message: 'Schedule is already cancelled.',
+        schedule,
+        post: schedule.contentPost,
+      };
     }
 
     return await prisma.$transaction(async (tx) => {

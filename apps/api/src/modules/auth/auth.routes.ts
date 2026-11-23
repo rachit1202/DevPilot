@@ -10,7 +10,7 @@ export async function authRoutes(server: FastifyInstance) {
     {
       config: {
         rateLimit: {
-          max: config.NODE_ENV === 'production' ? 10 : 100,
+          max: config.AUTH_RATE_LIMIT_MAX,
           timeWindow: '1 minute',
         },
       },

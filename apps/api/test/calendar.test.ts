@@ -47,6 +47,7 @@ async function runCalendarTests() {
   }
 
   const ownerCookie = await loginAs(ownerEmail, ownerPassword);
+  const ownerUser = await prisma.user.findUniqueOrThrow({ where: { email: ownerEmail } });
 
   // Setup Editor user
   const editorEmail = 'editor.cal@codeculture.dev';
@@ -512,6 +513,483 @@ async function runCalendarTests() {
     assert.equal(scheduleCount, 0);
   });
 
+  // =========================================================================
+  // 16. Concurrent scheduling race condition (PostgreSQL partial unique index)
+  // =========================================================================
+  await test('16. Concurrent simultaneous scheduling requests: 1 succeeds (201), 1 fails (409 Conflict), exactly 1 active schedule exists', async () => {
+    // Create and approve a new post specifically for concurrency testing
+    const concPost = await prisma.contentPost.create({
+      data: {
+        title: 'Concurrency Test Post',
+        caption: 'Testing concurrent scheduling race condition',
+        status: PostStatus.APPROVED,
+        createdById: ownerUser.id,
+        brandSettingsId: brand.id,
+        approvals: {
+          create: {
+            status: ApprovalStatus.APPROVED,
+            requestedById: ownerUser.id,
+            reviewedById: ownerUser.id,
+            comment: 'Approved for concurrency test',
+          },
+        },
+      },
+    });
+
+    const targetDate = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+
+    // To simulate true concurrent overlapping execution where both requests pass the initial checks
+    // before either transaction commits, delay the first transaction commit slightly
+    let delayFirstTx = true;
+    const origTransaction = prisma.$transaction.bind(prisma);
+    (prisma as any).$transaction = async (fn: any, options: any) => {
+      if (typeof fn === 'function' && delayFirstTx) {
+        delayFirstTx = false;
+        return origTransaction(async (tx: any) => {
+          const res = await fn(tx);
+          await new Promise((r) => setTimeout(r, 100)); // hold transaction lock to guarantee race overlap
+          return res;
+        }, options);
+      }
+      return origTransaction(fn, options);
+    };
+
+    let res1;
+    let res2;
+    try {
+      // Fire 2 simultaneous scheduling requests
+      [res1, res2] = await Promise.all([
+        server.inject({
+          method: 'POST',
+          url: '/api/v1/calendar/schedule',
+          headers: { cookie: ownerCookie, origin: frontendOrigin },
+          payload: {
+            contentPostId: concPost.id,
+            scheduledAt: targetDate.toISOString(),
+          },
+        }),
+        server.inject({
+          method: 'POST',
+          url: '/api/v1/calendar/schedule',
+          headers: { cookie: ownerCookie, origin: frontendOrigin },
+          payload: {
+            contentPostId: concPost.id,
+            scheduledAt: targetDate.toISOString(),
+          },
+        }),
+      ]);
+    } finally {
+      (prisma as any).$transaction = origTransaction;
+    }
+
+    const statusCodes = [res1.statusCode, res2.statusCode].sort();
+    assert.deepEqual(statusCodes, [201, 409], 'One request must succeed (201) and one must be rejected with 409 Conflict');
+
+    const conflictRes = res1.statusCode === 409 ? res1 : res2;
+    const conflictBody = JSON.parse(conflictRes.body);
+    assert.match(conflictBody.message, /already has an active schedule/i);
+
+    // Verify in database: exactly 1 active schedule exists
+    const activeSchedules = await prisma.contentSchedule.findMany({
+      where: { contentPostId: concPost.id, status: 'SCHEDULED' },
+    });
+    assert.equal(activeSchedules.length, 1);
+
+    // Cleanup concPost
+    await prisma.contentSchedule.deleteMany({ where: { contentPostId: concPost.id } });
+    await prisma.approval.deleteMany({ where: { contentPostId: concPost.id } });
+    await prisma.contentPost.delete({ where: { id: concPost.id } });
+  });
+
+  // =========================================================================
+  // 17. Multiple historical CANCELLED schedules allowed
+  // =========================================================================
+  await test('17. Multiple historical CANCELLED schedules coexist without conflict and permit a subsequent SCHEDULED record', async () => {
+    const multiCancelPost = await prisma.contentPost.create({
+      data: {
+        title: 'Multi Cancel Post',
+        caption: 'Testing multiple cancelled schedules',
+        status: PostStatus.APPROVED,
+        createdById: ownerUser.id,
+        brandSettingsId: brand.id,
+        approvals: {
+          create: {
+            status: ApprovalStatus.APPROVED,
+            requestedById: ownerUser.id,
+            reviewedById: ownerUser.id,
+            comment: 'Approved',
+          },
+        },
+      },
+    });
+
+    const d1 = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    const d2 = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    const d3 = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+
+    // Schedule 1
+    const s1Res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/calendar/schedule',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: { contentPostId: multiCancelPost.id, scheduledAt: d1.toISOString() },
+    });
+    assert.equal(s1Res.statusCode, 201);
+    const s1Id = JSON.parse(s1Res.body).data.schedule.id;
+
+    // Cancel 1
+    const c1Res = await server.inject({
+      method: 'DELETE',
+      url: `/api/v1/calendar/schedule/${s1Id}`,
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+    });
+    assert.equal(c1Res.statusCode, 200);
+
+    // Schedule 2
+    const s2Res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/calendar/schedule',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: { contentPostId: multiCancelPost.id, scheduledAt: d2.toISOString() },
+    });
+    assert.equal(s2Res.statusCode, 201);
+    const s2Id = JSON.parse(s2Res.body).data.schedule.id;
+
+    // Cancel 2
+    const c2Res = await server.inject({
+      method: 'DELETE',
+      url: `/api/v1/calendar/schedule/${s2Id}`,
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+    });
+    assert.equal(c2Res.statusCode, 200);
+
+    // Schedule 3 (Active)
+    const s3Res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/calendar/schedule',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: { contentPostId: multiCancelPost.id, scheduledAt: d3.toISOString() },
+    });
+    assert.equal(s3Res.statusCode, 201);
+
+    // Verify all 3 rows exist in DB
+    const schedulesInDb = await prisma.contentSchedule.findMany({
+      where: { contentPostId: multiCancelPost.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    assert.equal(schedulesInDb.length, 3);
+    assert.equal(schedulesInDb[0].status, 'CANCELLED');
+    assert.equal(schedulesInDb[1].status, 'CANCELLED');
+    assert.equal(schedulesInDb[2].status, 'SCHEDULED');
+
+    // Cleanup
+    await prisma.contentSchedule.deleteMany({ where: { contentPostId: multiCancelPost.id } });
+    await prisma.approval.deleteMany({ where: { contentPostId: multiCancelPost.id } });
+    await prisma.contentPost.delete({ where: { id: multiCancelPost.id } });
+  });
+
+  // =========================================================================
+  // 18. Repeated cancellation idempotency
+  // =========================================================================
+  await test('18. Repeated cancellation of already cancelled schedule returns 200 and emits NO duplicate activity logs', async () => {
+    const cancelPost = await prisma.contentPost.create({
+      data: {
+        title: 'Cancel Idempotency Post',
+        caption: 'Testing repeated cancellation',
+        status: PostStatus.APPROVED,
+        createdById: ownerUser.id,
+        brandSettingsId: brand.id,
+        approvals: {
+          create: {
+            status: ApprovalStatus.APPROVED,
+            requestedById: ownerUser.id,
+            reviewedById: ownerUser.id,
+            comment: 'Approved',
+          },
+        },
+      },
+    });
+
+    const d = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    const sRes = await server.inject({
+      method: 'POST',
+      url: '/api/v1/calendar/schedule',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: { contentPostId: cancelPost.id, scheduledAt: d.toISOString() },
+    });
+    assert.equal(sRes.statusCode, 201);
+    const sId = JSON.parse(sRes.body).data.schedule.id;
+
+    // First cancel
+    const cancel1 = await server.inject({
+      method: 'DELETE',
+      url: `/api/v1/calendar/schedule/${sId}`,
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+    });
+    assert.equal(cancel1.statusCode, 200);
+
+    // Second cancel (Idempotent)
+    const cancel2 = await server.inject({
+      method: 'DELETE',
+      url: `/api/v1/calendar/schedule/${sId}`,
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+    });
+    assert.equal(cancel2.statusCode, 200);
+
+    // Count activity logs for CONTENT_SCHEDULE_CANCELLED on this schedule
+    const cancelLogs = await prisma.activityLog.findMany({
+      where: {
+        action: 'CONTENT_SCHEDULE_CANCELLED',
+        entityId: sId,
+      },
+    });
+    assert.equal(cancelLogs.length, 1, 'Only 1 activity log should exist despite duplicate cancel calls');
+
+    // Cleanup
+    await prisma.contentSchedule.deleteMany({ where: { contentPostId: cancelPost.id } });
+    await prisma.approval.deleteMany({ where: { contentPostId: cancelPost.id } });
+    await prisma.contentPost.delete({ where: { id: cancelPost.id } });
+  });
+
+  // =========================================================================
+  // 19. Transaction rollback verification on schedule failure
+  // =========================================================================
+  await test('19. Transaction rollback on scheduling failure: no schedule persisted and post remains APPROVED', async () => {
+    const rollbackPost = await prisma.contentPost.create({
+      data: {
+        title: 'Rollback Schedule Post',
+        caption: 'Testing rollback atomicity',
+        status: PostStatus.APPROVED,
+        createdById: ownerUser.id,
+        brandSettingsId: brand.id,
+        approvals: {
+          create: {
+            status: ApprovalStatus.APPROVED,
+            requestedById: ownerUser.id,
+            reviewedById: ownerUser.id,
+            comment: 'Approved',
+          },
+        },
+      },
+    });
+
+    const d = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+
+    // Intercept $transaction to simulate mid-transaction failure
+    const origTransaction = prisma.$transaction.bind(prisma);
+    (prisma as any).$transaction = async (fn: any, options: any) => {
+      if (typeof fn === 'function') {
+        return origTransaction(async (tx: any) => {
+          // Monkeypatch tx.contentPost.update to throw
+          tx.contentPost.update = async () => {
+            throw new Error('INJECTED_TRANSACTION_FAILURE_DURING_SCHEDULE');
+          };
+          return fn(tx);
+        }, options);
+      }
+      return origTransaction(fn, options);
+    };
+
+    try {
+      const res = await server.inject({
+        method: 'POST',
+        url: '/api/v1/calendar/schedule',
+        headers: { cookie: ownerCookie, origin: frontendOrigin },
+        payload: { contentPostId: rollbackPost.id, scheduledAt: d.toISOString() },
+      });
+      assert.equal(res.statusCode, 500);
+    } finally {
+      (prisma as any).$transaction = origTransaction;
+    }
+
+    // Verify rollback: no schedule was created
+    const scheduleCount = await prisma.contentSchedule.count({
+      where: { contentPostId: rollbackPost.id },
+    });
+    assert.equal(scheduleCount, 0, 'Schedule record must be rolled back');
+
+    // Verify post status is still APPROVED
+    const postInDb = await prisma.contentPost.findUnique({ where: { id: rollbackPost.id } });
+    assert.equal(postInDb?.status, PostStatus.APPROVED, 'Post must remain in APPROVED status');
+    assert.equal(postInDb?.scheduledAt, null, 'Post scheduledAt must remain null');
+
+    // Cleanup
+    await prisma.approval.deleteMany({ where: { contentPostId: rollbackPost.id } });
+    await prisma.contentPost.delete({ where: { id: rollbackPost.id } });
+  });
+
+  // =========================================================================
+  // 20. Transaction rollback verification on reschedule failure
+  // =========================================================================
+  await test('20. Transaction rollback on reschedule failure: preserves original scheduledAt for both schedule and post', async () => {
+    const reschedulePost = await prisma.contentPost.create({
+      data: {
+        title: 'Rollback Reschedule Post',
+        caption: 'Testing reschedule rollback',
+        status: PostStatus.APPROVED,
+        createdById: ownerUser.id,
+        brandSettingsId: brand.id,
+        approvals: {
+          create: {
+            status: ApprovalStatus.APPROVED,
+            requestedById: ownerUser.id,
+            reviewedById: ownerUser.id,
+            comment: 'Approved',
+          },
+        },
+      },
+    });
+
+    const t1 = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    const t2 = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+
+    const sRes = await server.inject({
+      method: 'POST',
+      url: '/api/v1/calendar/schedule',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: { contentPostId: reschedulePost.id, scheduledAt: t1.toISOString() },
+    });
+    assert.equal(sRes.statusCode, 201);
+    const sId = JSON.parse(sRes.body).data.schedule.id;
+
+    // Intercept $transaction to simulate mid-reschedule failure
+    const origTransaction = prisma.$transaction.bind(prisma);
+    (prisma as any).$transaction = async (fn: any, options: any) => {
+      if (typeof fn === 'function') {
+        return origTransaction(async (tx: any) => {
+          tx.contentPost.update = async () => {
+            throw new Error('INJECTED_TRANSACTION_FAILURE_DURING_RESCHEDULE');
+          };
+          return fn(tx);
+        }, options);
+      }
+      return origTransaction(fn, options);
+    };
+
+    try {
+      const res = await server.inject({
+        method: 'PATCH',
+        url: `/api/v1/calendar/schedule/${sId}`,
+        headers: { cookie: ownerCookie, origin: frontendOrigin },
+        payload: { scheduledAt: t2.toISOString() },
+      });
+      assert.equal(res.statusCode, 500);
+    } finally {
+      (prisma as any).$transaction = origTransaction;
+    }
+
+    // Verify rollback: schedule and post scheduledAt still match t1
+    const scheduleInDb = await prisma.contentSchedule.findUnique({ where: { id: sId } });
+    assert.equal(scheduleInDb?.scheduledAt.toISOString(), t1.toISOString(), 'Schedule date must remain T1');
+
+    const postInDb = await prisma.contentPost.findUnique({ where: { id: reschedulePost.id } });
+    assert.equal(postInDb?.scheduledAt?.toISOString(), t1.toISOString(), 'Post scheduledAt must remain T1');
+
+    // Cleanup
+    await prisma.contentSchedule.deleteMany({ where: { contentPostId: reschedulePost.id } });
+    await prisma.approval.deleteMany({ where: { contentPostId: reschedulePost.id } });
+    await prisma.contentPost.delete({ where: { id: reschedulePost.id } });
+  });
+
+  // =========================================================================
+  // 21. Transaction rollback verification on cancel failure
+  // =========================================================================
+  await test('21. Transaction rollback on cancel failure: preserves SCHEDULED status for both schedule and post', async () => {
+    const cancelRollbackPost = await prisma.contentPost.create({
+      data: {
+        title: 'Rollback Cancel Post',
+        caption: 'Testing cancel rollback',
+        status: PostStatus.APPROVED,
+        createdById: ownerUser.id,
+        brandSettingsId: brand.id,
+        approvals: {
+          create: {
+            status: ApprovalStatus.APPROVED,
+            requestedById: ownerUser.id,
+            reviewedById: ownerUser.id,
+            comment: 'Approved',
+          },
+        },
+      },
+    });
+
+    const t1 = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    const sRes = await server.inject({
+      method: 'POST',
+      url: '/api/v1/calendar/schedule',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: { contentPostId: cancelRollbackPost.id, scheduledAt: t1.toISOString() },
+    });
+    assert.equal(sRes.statusCode, 201);
+    const sId = JSON.parse(sRes.body).data.schedule.id;
+
+    // Intercept $transaction to simulate mid-cancel failure
+    const origTransaction = prisma.$transaction.bind(prisma);
+    (prisma as any).$transaction = async (fn: any, options: any) => {
+      if (typeof fn === 'function') {
+        return origTransaction(async (tx: any) => {
+          tx.contentPost.update = async () => {
+            throw new Error('INJECTED_TRANSACTION_FAILURE_DURING_CANCEL');
+          };
+          return fn(tx);
+        }, options);
+      }
+      return origTransaction(fn, options);
+    };
+
+    try {
+      const res = await server.inject({
+        method: 'DELETE',
+        url: `/api/v1/calendar/schedule/${sId}`,
+        headers: { cookie: ownerCookie, origin: frontendOrigin },
+      });
+      assert.equal(res.statusCode, 500);
+    } finally {
+      (prisma as any).$transaction = origTransaction;
+    }
+
+    // Verify rollback: schedule and post still have status SCHEDULED
+    const scheduleInDb = await prisma.contentSchedule.findUnique({ where: { id: sId } });
+    assert.equal(scheduleInDb?.status, 'SCHEDULED', 'Schedule status must remain SCHEDULED');
+
+    const postInDb = await prisma.contentPost.findUnique({ where: { id: cancelRollbackPost.id } });
+    assert.equal(postInDb?.status, PostStatus.SCHEDULED, 'Post status must remain SCHEDULED');
+
+    // Cleanup
+    await prisma.contentSchedule.deleteMany({ where: { contentPostId: cancelRollbackPost.id } });
+    await prisma.approval.deleteMany({ where: { contentPostId: cancelRollbackPost.id } });
+    await prisma.contentPost.delete({ where: { id: cancelRollbackPost.id } });
+  });
+
+  // =========================================================================
+  // 22. Asia/Kolkata timezone boundaries (1 Nov 00:00, 05:29, 05:30, Oct/Nov, Dec/Jan)
+  // =========================================================================
+  await test('22. Timezone boundary precision: verifies UTC conversion for Asia/Kolkata boundary cases', async () => {
+    // Asia/Kolkata is UTC+05:30.
+    // 1 Nov 2026 12:00:00 AM IST is 31 Oct 2026 18:30:00.000 UTC
+    const istMidnight = new Date('2026-10-31T18:30:00.000Z');
+    const ist529Am = new Date('2026-10-31T23:59:00.000Z');
+    const ist530Am = new Date('2026-11-01T00:00:00.000Z');
+    const decJanIstMidnight = new Date('2026-12-31T18:30:00.000Z');
+
+    // Format in Asia/Kolkata
+    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
+    assert.equal(fmt.format(istMidnight), '2026-11-01', '31 Oct 18:30 UTC must format to 2026-11-01 in IST');
+    assert.equal(fmt.format(ist529Am), '2026-11-01', '31 Oct 23:59 UTC must format to 2026-11-01 in IST');
+    assert.equal(fmt.format(ist530Am), '2026-11-01', '1 Nov 00:00 UTC must format to 2026-11-01 in IST');
+    assert.equal(fmt.format(decJanIstMidnight), '2027-01-01', '31 Dec 18:30 UTC must format to 2027-01-01 in IST');
+
+    // Query calendar range matching November 2026 in IST: 2026-10-31T18:30:00.000Z to 2026-11-30T18:29:59.999Z
+    const res = await server.inject({
+      method: 'GET',
+      url: `/api/v1/calendar?startDate=${encodeURIComponent('2026-10-31T18:30:00.000Z')}&endDate=${encodeURIComponent('2026-11-30T18:29:59.999Z')}`,
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.data.timezone, 'Asia/Kolkata');
+  });
+
   // Cleanup test posts and test users
   await prisma.contentSchedule.deleteMany({
     where: { contentPostId: { in: [editorApprovedPostId, ownerApprovedPostId] } },
@@ -524,7 +1002,7 @@ async function runCalendarTests() {
   });
 
   console.log('\n----------------------------------------');
-  console.log(`  Calendar Tests completed: 15 total`);
+  console.log(`  Calendar Tests completed: 22 total`);
   console.log(`  Passed: ${passed}`);
   console.log(`  Failed: ${failed}`);
   console.log('----------------------------------------\n');
