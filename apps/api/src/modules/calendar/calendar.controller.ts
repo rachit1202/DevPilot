@@ -58,7 +58,8 @@ export class CalendarController {
         error.message.startsWith('INVALID_POST_STATUS') ||
         error.message.startsWith('INVALID_APPROVAL') ||
         error.message.startsWith('INVALID_SCHEDULE_DATE') ||
-        error.message.startsWith('INVALID_DATE')
+        error.message.startsWith('INVALID_DATE') ||
+        error.message.startsWith('NONEXISTENT_LOCAL_TIME')
       ) {
         return reply.status(400).send({
           success: false,
@@ -106,7 +107,12 @@ export class CalendarController {
           message: error.message.replace(/^[A-Z_]+:\s*/, ''),
         });
       }
-      if (error.message.startsWith('INVALID_SCHEDULE_STATE') || error.message.startsWith('INVALID_SCHEDULE_DATE')) {
+      if (
+        error.message.startsWith('INVALID_SCHEDULE_STATE') ||
+        error.message.startsWith('INVALID_SCHEDULE_DATE') ||
+        error.message.startsWith('INVALID_DATE') ||
+        error.message.startsWith('NONEXISTENT_LOCAL_TIME')
+      ) {
         return reply.status(400).send({
           success: false,
           error: 'Bad Request',

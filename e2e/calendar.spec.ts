@@ -123,4 +123,92 @@ test.describe('DevPilot Content Calendar & Scheduling E2E Suite', () => {
     await page.getByRole('button', { name: 'Confirm Cancel' }).click();
     await expect(page.getByText('Schedule cancelled. Post returned to APPROVED status.')).toBeVisible();
   });
+
+  test('3. Nonexistent DST Local Time: Modal blocks submission and displays error', async ({ page }) => {
+    // 1. Authenticate and set timezone to America/New_York via API
+    await page.goto('/login');
+    await page.getByPlaceholder('admin@codeculture.dev').fill(ownerEmail);
+    await page.getByPlaceholder('Enter your password').fill(ownerPassword);
+    await page.getByRole('button', { name: /Sign In/i }).click();
+    await expect(page).toHaveURL('http://localhost:3000/');
+
+    await page.evaluate(async () => {
+      await fetch('http://localhost:4000/api/v1/settings/app', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ timezone: 'America/New_York' }),
+      });
+    });
+
+    // 2. Create an approved post
+    const testTitle = `DST Modal Test ${Date.now()}`;
+    await page.evaluate(async (title) => {
+      const res = await fetch('http://localhost:4000/api/v1/content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          title,
+          caption: 'Testing DST modal validation',
+          contentType: 'SINGLE_IMAGE',
+          category: 'WEB_DEV_TIPS',
+          hashtags: ['#dst'],
+        }),
+      });
+      const data = await res.json();
+      const postId = data.data?.post?.id || data.post?.id;
+      await fetch(`http://localhost:4000/api/v1/content/${postId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ comment: 'Approved for DST modal test' }),
+      });
+    }, testTitle);
+
+    // 3. Navigate to calendar
+    await page.goto('/calendar');
+    await expect(page).toHaveURL('http://localhost:3000/calendar');
+    await expect(page.getByText(/America\/New_York/)).toBeVisible();
+
+    // 4. Open Schedule modal
+    await page.getByRole('button', { name: 'Schedule Post' }).first().click();
+    await expect(page.getByText('Schedule Content Post')).toBeVisible();
+
+    // 5. Select the post
+    const select = page.locator('form select');
+    await select.waitFor({ state: 'visible' });
+    const option = select.locator('option', { hasText: testTitle });
+    await expect(option).toBeAttached({ timeout: 5000 });
+    const optionVal = await option.getAttribute('value');
+    if (optionVal) {
+      await select.selectOption(optionVal);
+    }
+
+    // 6. Enter nonexistent local time during spring-forward transition (March 8, 2026 02:30)
+    await page.locator('input[type="datetime-local"]').fill('2026-03-08T02:30');
+
+    // 7. Click submit and assert validation error is displayed
+    const submitBtn = page.getByRole('button', { name: 'Confirm Schedule' });
+    await submitBtn.click();
+
+    await expect(
+      page.getByText(/The selected time does not exist in America\/New_York due to a daylight saving time transition/i)
+    ).toBeVisible();
+
+    // 8. Verify modal is still visible (submission blocked)
+    await expect(page.getByText('Schedule Content Post')).toBeVisible();
+
+    // 9. Close modal and restore timezone to Asia/Kolkata
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    await page.evaluate(async () => {
+      await fetch('http://localhost:4000/api/v1/settings/app', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ timezone: 'Asia/Kolkata' }),
+      });
+    });
+  });
 });

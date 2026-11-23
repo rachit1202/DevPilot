@@ -5,7 +5,7 @@ import { CalendarQueryInput, SchedulePostInput, ReschedulePostInput } from '@dev
 import { PostStatus, ApprovalStatus, UserRole, Prisma } from '@prisma/client';
 import { AuthUser } from '../../types/fastify';
 import { config } from '../../config/env';
-import { ianaLocalToUtc } from '@devpilot/shared';
+import { ianaLocalToUtc, parseIanaDateTimeInput } from '@devpilot/shared';
 
 export class CalendarService {
   /**
@@ -129,7 +129,24 @@ export class CalendarService {
       throw new Error('FORBIDDEN: Analysts have read-only access and cannot schedule content.');
     }
 
-    const scheduledDate = new Date(input.scheduledAt);
+    const appSettings = await SettingsService.getApplicationSettings();
+    const effectiveTimezone = appSettings.timezone || config.APP_TIMEZONE || 'Asia/Kolkata';
+
+    let scheduledDate: Date;
+    const isIsoWithOffset = /Z|[+-]\d{2}(:?\d{2})?$/.test(input.scheduledAt);
+    if (!isIsoWithOffset) {
+      try {
+        scheduledDate = parseIanaDateTimeInput(input.scheduledAt, effectiveTimezone);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes('NONEXISTENT_LOCAL_TIME')) {
+          throw new Error(`NONEXISTENT_LOCAL_TIME: ${err.message}`);
+        }
+        throw new Error('INVALID_DATE: Invalid scheduled date format.');
+      }
+    } else {
+      scheduledDate = new Date(input.scheduledAt);
+    }
+
     if (isNaN(scheduledDate.getTime())) {
       throw new Error('INVALID_DATE: Invalid scheduled date format.');
     }
@@ -253,7 +270,24 @@ export class CalendarService {
       throw new Error('FORBIDDEN: Analysts have read-only access and cannot reschedule content.');
     }
 
-    const newScheduledDate = new Date(input.scheduledAt);
+    const appSettings = await SettingsService.getApplicationSettings();
+    const effectiveTimezone = appSettings.timezone || config.APP_TIMEZONE || 'Asia/Kolkata';
+
+    let newScheduledDate: Date;
+    const isIsoWithOffset = /Z|[+-]\d{2}(:?\d{2})?$/.test(input.scheduledAt);
+    if (!isIsoWithOffset) {
+      try {
+        newScheduledDate = parseIanaDateTimeInput(input.scheduledAt, effectiveTimezone);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes('NONEXISTENT_LOCAL_TIME')) {
+          throw new Error(`NONEXISTENT_LOCAL_TIME: ${err.message}`);
+        }
+        throw new Error('INVALID_DATE: Invalid scheduled date format.');
+      }
+    } else {
+      newScheduledDate = new Date(input.scheduledAt);
+    }
+
     if (isNaN(newScheduledDate.getTime())) {
       throw new Error('INVALID_DATE: Invalid scheduled date format.');
     }

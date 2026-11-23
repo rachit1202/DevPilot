@@ -990,6 +990,232 @@ async function runCalendarTests() {
     assert.equal(body.data.timezone, 'Asia/Kolkata');
   });
 
+  // =========================================================================
+  // 23. DST Spring-Forward Validation in ianaLocalToUtc
+  // =========================================================================
+  await test('23. DST Spring-Forward Validation: Rejects nonexistent local time with NonexistentLocalTimeError, allows valid before/after', async () => {
+    const { ianaLocalToUtc } = await import('@devpilot/shared');
+
+    // America/New_York DST spring-forward: March 8, 2026. Clocks jump 02:00 -> 03:00.
+    // 1. Nonexistent time (02:30) must throw NonexistentLocalTimeError
+    assert.throws(
+      () => {
+        ianaLocalToUtc(2026, 3, 8, 2, 30, 0, 'America/New_York');
+      },
+      (err: any) => {
+        assert.equal(err.code, 'NONEXISTENT_LOCAL_TIME');
+        assert.match(err.message, /does not exist in time zone America\/New_York/);
+        return true;
+      },
+      'Nonexistent local time must throw NonexistentLocalTimeError with code NONEXISTENT_LOCAL_TIME'
+    );
+
+    // 2. Valid time immediately before transition (01:59:00 EST, UTC-5)
+    const beforeDate = ianaLocalToUtc(2026, 3, 8, 1, 59, 0, 'America/New_York');
+    assert.equal(beforeDate.toISOString(), '2026-03-08T06:59:00.000Z');
+
+    // 3. Valid time immediately after transition (03:00:00 EDT, UTC-4)
+    const afterDate = ianaLocalToUtc(2026, 3, 8, 3, 0, 0, 'America/New_York');
+    assert.equal(afterDate.toISOString(), '2026-03-08T07:00:00.000Z');
+  });
+
+  // =========================================================================
+  // 24. DST Fall-Back Ambiguous Time Policy
+  // =========================================================================
+  await test('24. DST Fall-Back Ambiguous Time: Deterministically selects first occurrence (EDT)', async () => {
+    const { ianaLocalToUtc, getLocalParts } = await import('@devpilot/shared');
+
+    // America/New_York DST fall-back: Nov 1, 2026. Clocks repeat 01:00 -> 02:00.
+    // 01:30 occurs first at 05:30 UTC (EDT, UTC-4), and second at 06:30 UTC (EST, UTC-5).
+    const ambiguousDate = ianaLocalToUtc(2026, 11, 1, 1, 30, 0, 'America/New_York');
+    assert.equal(ambiguousDate.toISOString(), '2026-11-01T05:30:00.000Z', 'Must deterministically select first occurrence (EDT)');
+
+    const localParts = getLocalParts(ambiguousDate, 'America/New_York');
+    assert.equal(localParts.hour, 1);
+    assert.equal(localParts.minute, 30);
+  });
+
+  // =========================================================================
+  // 25. Standard conversions, invalid timezone rejection, malformed inputs
+  // =========================================================================
+  await test('25. Standard conversions (Asia/Kolkata, UTC), invalid timezones, and malformed inputs', async () => {
+    const { ianaLocalToUtc, parseIanaDateTimeInput } = await import('@devpilot/shared');
+
+    // Asia/Kolkata (+05:30)
+    const kolkataDate = ianaLocalToUtc(2026, 11, 23, 12, 0, 0, 'Asia/Kolkata');
+    assert.equal(kolkataDate.toISOString(), '2026-11-23T06:30:00.000Z');
+
+    // UTC (+00:00)
+    const utcDate = ianaLocalToUtc(2026, 11, 23, 12, 0, 0, 'UTC');
+    assert.equal(utcDate.toISOString(), '2026-11-23T12:00:00.000Z');
+
+    // Invalid timezone
+    assert.throws(() => {
+      ianaLocalToUtc(2026, 11, 23, 12, 0, 0, 'Invalid/Timezone');
+    }, /Invalid time zone/);
+
+    // Malformed inputs to parseIanaDateTimeInput
+    assert.throws(() => {
+      parseIanaDateTimeInput('not-a-datetime', 'UTC');
+    }, /INVALID_DATE/);
+
+    assert.throws(() => {
+      parseIanaDateTimeInput('', 'UTC');
+    }, /INVALID_DATE/);
+  });
+
+  // =========================================================================
+  // 26. Backend scheduling rejection for nonexistent local time
+  // =========================================================================
+  await test('26. Backend scheduling rejection for nonexistent local time (400 Bad Request, no database mutation, no phantom logs)', async () => {
+    // 1. Temporarily configure application timezone to America/New_York
+    await prisma.applicationSettings.update({
+      where: { isSingleton: true },
+      data: { timezone: 'America/New_York' },
+    });
+
+    // Create an approved post to test scheduling
+    const testPost = await prisma.contentPost.create({
+      data: {
+        title: 'DST Test Post',
+        caption: 'Testing DST nonexistent time scheduling',
+        contentType: ContentType.SINGLE_IMAGE,
+        category: ContentCategory.WEB_DEV_TIPS,
+        status: PostStatus.APPROVED,
+        createdById: ownerUser.id,
+        brandSettingsId: brand.id,
+        approvals: {
+          create: {
+            requestedById: ownerUser.id,
+            reviewedById: ownerUser.id,
+            status: ApprovalStatus.APPROVED,
+            reviewedAt: new Date(),
+          },
+        },
+      },
+    });
+
+    const initialLogCount = await prisma.activityLog.count();
+
+    // 2. Attempt to schedule for 2026-03-08 02:30:00 (nonexistent local time in America/New_York)
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/calendar/schedule',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: {
+        contentPostId: testPost.id,
+        scheduledAt: '2026-03-08T02:30:00',
+      },
+    });
+
+    assert.equal(res.statusCode, 400, 'Must return 400 Bad Request');
+    const body = JSON.parse(res.body);
+    assert.equal(body.success, false);
+    assert.match(body.message, /does not exist in time zone America\/New_York/i);
+
+    // 3. Verify no database mutations
+    const postAfter = await prisma.contentPost.findUnique({ where: { id: testPost.id } });
+    assert.equal(postAfter?.status, PostStatus.APPROVED, 'Post must remain in APPROVED status');
+    assert.equal(postAfter?.scheduledAt, null, 'Post scheduledAt must remain null');
+
+    const schedules = await prisma.contentSchedule.findMany({ where: { contentPostId: testPost.id } });
+    assert.equal(schedules.length, 0, 'No schedule record must be created');
+
+    // 4. Verify no phantom activity logs
+    const finalLogCount = await prisma.activityLog.count();
+    assert.equal(finalLogCount, initialLogCount, 'No activity log must be created on rejected schedule');
+
+    // Cleanup
+    await prisma.approval.deleteMany({ where: { contentPostId: testPost.id } });
+    await prisma.contentPost.delete({ where: { id: testPost.id } });
+
+    // Restore timezone
+    await prisma.applicationSettings.update({
+      where: { isSingleton: true },
+      data: { timezone: 'Asia/Kolkata' },
+    });
+  });
+
+  // =========================================================================
+  // 27. Backend rescheduling rejection for nonexistent local time
+  // =========================================================================
+  await test('27. Backend rescheduling rejection for nonexistent local time (400 Bad Request, preserves schedule, no phantom logs)', async () => {
+    // 1. Temporarily configure application timezone to America/New_York
+    await prisma.applicationSettings.update({
+      where: { isSingleton: true },
+      data: { timezone: 'America/New_York' },
+    });
+
+    const futureDate = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+    const testPost = await prisma.contentPost.create({
+      data: {
+        title: 'DST Reschedule Post',
+        caption: 'Testing DST nonexistent time rescheduling',
+        contentType: ContentType.SINGLE_IMAGE,
+        category: ContentCategory.WEB_DEV_TIPS,
+        status: PostStatus.SCHEDULED,
+        scheduledAt: futureDate,
+        createdById: ownerUser.id,
+        brandSettingsId: brand.id,
+        approvals: {
+          create: {
+            requestedById: ownerUser.id,
+            reviewedById: ownerUser.id,
+            status: ApprovalStatus.APPROVED,
+            reviewedAt: new Date(),
+          },
+        },
+        schedules: {
+          create: {
+            scheduledAt: futureDate,
+            status: 'SCHEDULED',
+          },
+        },
+      },
+      include: {
+        schedules: true,
+      },
+    });
+
+    const scheduleId = testPost.schedules[0].id;
+    const initialLogCount = await prisma.activityLog.count();
+
+    // 2. Attempt to reschedule for 2026-03-08 02:30:00 (nonexistent local time in America/New_York)
+    const res = await server.inject({
+      method: 'PATCH',
+      url: `/api/v1/calendar/schedule/${scheduleId}`,
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: {
+        scheduledAt: '2026-03-08T02:30:00',
+      },
+    });
+
+    assert.equal(res.statusCode, 400, 'Must return 400 Bad Request');
+    const body = JSON.parse(res.body);
+    assert.equal(body.success, false);
+    assert.match(body.message, /does not exist in time zone America\/New_York/i);
+
+    // 3. Verify database unchanged
+    const scheduleAfter = await prisma.contentSchedule.findUnique({ where: { id: scheduleId } });
+    assert.equal(scheduleAfter?.scheduledAt.toISOString(), futureDate.toISOString(), 'Schedule date must be unchanged');
+    assert.equal(scheduleAfter?.status, 'SCHEDULED');
+
+    // 4. Verify no phantom activity logs
+    const finalLogCount = await prisma.activityLog.count();
+    assert.equal(finalLogCount, initialLogCount, 'No activity log must be created on rejected reschedule');
+
+    // Cleanup
+    await prisma.contentSchedule.deleteMany({ where: { contentPostId: testPost.id } });
+    await prisma.approval.deleteMany({ where: { contentPostId: testPost.id } });
+    await prisma.contentPost.delete({ where: { id: testPost.id } });
+
+    // Restore timezone
+    await prisma.applicationSettings.update({
+      where: { isSingleton: true },
+      data: { timezone: 'Asia/Kolkata' },
+    });
+  });
+
   // Cleanup test posts and test users
   await prisma.contentSchedule.deleteMany({
     where: { contentPostId: { in: [editorApprovedPostId, ownerApprovedPostId] } },
@@ -1002,7 +1228,7 @@ async function runCalendarTests() {
   });
 
   console.log('\n----------------------------------------');
-  console.log(`  Calendar Tests completed: 22 total`);
+  console.log(`  Calendar Tests completed: 27 total`);
   console.log(`  Passed: ${passed}`);
   console.log(`  Failed: ${failed}`);
   console.log('----------------------------------------\n');

@@ -41,28 +41,6 @@ import {
 
 export type CalendarViewMode = 'month' | 'week' | 'day' | 'list';
 
-export const APP_TIMEZONE = 'Asia/Kolkata';
-
-export function kolkataToUtc(
-  year: number,
-  month: number, // 1-indexed (1-12)
-  day: number,
-  hours = 0,
-  minutes = 0,
-  seconds = 0,
-  ms = 0
-): Date {
-  return new Date(ianaLocalToUtc(year, month, day, hours, minutes, seconds, 'Asia/Kolkata').getTime() + ms);
-}
-
-export function formatToKolkataDateStr(dateOrIso: Date | string, tz = 'Asia/Kolkata'): string {
-  return formatIanaDateStr(dateOrIso, tz, 'YYYY-MM-DD');
-}
-
-export function parseKolkataDateTimeInput(dtStr: string, tz = 'Asia/Kolkata'): Date {
-  return parseIanaDateTimeInput(dtStr, tz);
-}
-
 function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
@@ -342,7 +320,18 @@ export default function ContentCalendarPage() {
       return;
     }
 
-    const scheduledDate = parseIanaDateTimeInput(scheduleDateTime, appSettings.timezone);
+    let scheduledDate: Date;
+    try {
+      scheduledDate = parseIanaDateTimeInput(scheduleDateTime, appSettings.timezone);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Invalid scheduled date and time.';
+      setFormError(
+        msg.includes('NONEXISTENT_LOCAL_TIME')
+          ? `The selected time does not exist in ${appSettings.timezone} due to a daylight saving time transition. Please choose a different time.`
+          : msg
+      );
+      return;
+    }
     if (isNaN(scheduledDate.getTime())) {
       setFormError('Please select a valid scheduled date and time.');
       return;
@@ -381,7 +370,18 @@ export default function ContentCalendarPage() {
     e.preventDefault();
     if (!selectedSchedule) return;
 
-    const newDate = parseIanaDateTimeInput(scheduleDateTime, appSettings.timezone);
+    let newDate: Date;
+    try {
+      newDate = parseIanaDateTimeInput(scheduleDateTime, appSettings.timezone);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Invalid rescheduled date and time.';
+      setFormError(
+        msg.includes('NONEXISTENT_LOCAL_TIME')
+          ? `The selected time does not exist in ${appSettings.timezone} due to a daylight saving time transition. Please choose a different time.`
+          : msg
+      );
+      return;
+    }
     if (isNaN(newDate.getTime())) {
       setFormError('Please select a valid rescheduled date and time.');
       return;
