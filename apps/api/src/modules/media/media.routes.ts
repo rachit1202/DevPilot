@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import { MediaController } from './media.controller';
 import { authGuard } from '../../middleware/auth.guard';
+import { roleGuard } from '../../middleware/role.guard';
+import { UserRole } from '@devpilot/shared';
 
 export async function mediaRoutes(server: FastifyInstance) {
   // POST /media/upload (protected, with upload rate limit: 20 per minute)
@@ -45,11 +47,11 @@ export async function mediaRoutes(server: FastifyInstance) {
     MediaController.getFile
   );
 
-  // DELETE /media/:id (protected)
+  // DELETE /media/:id (protected, Owner/Admin only)
   server.delete(
     '/:id',
     {
-      preHandler: [authGuard],
+      preHandler: [authGuard, roleGuard(UserRole.OWNER, UserRole.ADMIN)],
     },
     MediaController.delete
   );

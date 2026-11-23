@@ -220,16 +220,25 @@ export default function ContentLibraryPage() {
     setIsSubmitting(true);
     setFormError(null);
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       title: formTitle.trim(),
       caption: formCaption.trim(),
       hashtags: formHashtags,
       cta: formCta.trim() || null,
       contentType: formContentType,
       category: formCategory,
-      status: formStatus,
       mediaAssetIds: selectedMediaIds,
     };
+
+    // Ordinary edits cannot directly set status to APPROVED, SCHEDULED, or PUBLISHED
+    if (
+      formStatus &&
+      formStatus !== PostStatus.APPROVED &&
+      formStatus !== PostStatus.SCHEDULED &&
+      formStatus !== PostStatus.PUBLISHED
+    ) {
+      payload.status = formStatus;
+    }
 
     try {
       if (editingPost) {
@@ -854,6 +863,49 @@ export default function ContentLibraryPage() {
                     {tag}
                   </span>
                 ))}
+              </div>
+            )}
+
+            {/* Review & Approval Actions */}
+            {viewingPost.status !== PostStatus.APPROVED && viewingPost.status !== PostStatus.PUBLISHED && (
+              <div className="flex items-center gap-2 mb-4 p-3 rounded-xl bg-devpilot-bg border border-devpilot-border">
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await apiRequest(`/content/${viewingPost.id}/approve`, { method: 'POST', data: {} });
+                      setSuccessMessage(`Post "${viewingPost.title}" approved successfully.`);
+                      setViewingPost(null);
+                      fetchPosts();
+                    } catch (err: unknown) {
+                      const e = err as Error;
+                      setError(e.message || 'Approval failed');
+                    }
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs gap-1.5 h-8"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Approve Content</span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await apiRequest(`/content/${viewingPost.id}/reject`, { method: 'POST', data: {} });
+                      setSuccessMessage(`Post "${viewingPost.title}" rejected.`);
+                      setViewingPost(null);
+                      fetchPosts();
+                    } catch (err: unknown) {
+                      const e = err as Error;
+                      setError(e.message || 'Rejection failed');
+                    }
+                  }}
+                  className="text-devpilot-danger border-devpilot-danger/30 hover:bg-devpilot-danger/10 text-xs gap-1.5 h-8"
+                >
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>Reject</span>
+                </Button>
               </div>
             )}
 

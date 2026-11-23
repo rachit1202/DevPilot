@@ -10,7 +10,8 @@
     "start": "node --env-file=../../.env dist/index.js",
     "test": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/auth.test.ts",
     "test:content-media": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/content-media.test.ts",
-    "test:all": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/auth.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/content-media.test.ts",
+    "test:hardening": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/workflow-hardening.test.ts",
+    "test:all": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/auth.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/content-media.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/workflow-hardening.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

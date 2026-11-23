@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import { ContentController } from './content.controller';
 import { authGuard } from '../../middleware/auth.guard';
+import { roleGuard } from '../../middleware/role.guard';
+import { UserRole } from '@devpilot/shared';
 
 export async function contentRoutes(server: FastifyInstance) {
   // GET /content (protected, with search, filters, pagination)
@@ -12,7 +14,7 @@ export async function contentRoutes(server: FastifyInstance) {
     ContentController.list
   );
 
-  // POST /content (protected)
+  // POST /content (protected, Analysts cannot create)
   server.post(
     '/',
     {
@@ -30,7 +32,7 @@ export async function contentRoutes(server: FastifyInstance) {
     ContentController.getById
   );
 
-  // PATCH /content/:id (protected)
+  // PATCH /content/:id (protected, ownership & status rules enforced)
   server.patch(
     '/:id',
     {
@@ -39,7 +41,25 @@ export async function contentRoutes(server: FastifyInstance) {
     ContentController.update
   );
 
-  // DELETE /content/:id (protected)
+  // POST /content/:id/approve (protected, reviewers only)
+  server.post(
+    '/:id/approve',
+    {
+      preHandler: [authGuard, roleGuard(UserRole.OWNER, UserRole.ADMIN, UserRole.APPROVER)],
+    },
+    ContentController.approve
+  );
+
+  // POST /content/:id/reject (protected, reviewers only)
+  server.post(
+    '/:id/reject',
+    {
+      preHandler: [authGuard, roleGuard(UserRole.OWNER, UserRole.ADMIN, UserRole.APPROVER)],
+    },
+    ContentController.reject
+  );
+
+  // DELETE /content/:id (protected, ownership enforced)
   server.delete(
     '/:id',
     {

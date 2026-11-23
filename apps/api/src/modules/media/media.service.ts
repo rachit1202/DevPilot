@@ -2,6 +2,8 @@ import path from 'path';
 import fs from 'fs';
 import { prisma } from '../../db/prisma';
 import { ActivityService } from '../activity/activity.service';
+import { UserRole } from '@devpilot/shared';
+import { AuthUser } from '../../types/fastify';
 import {
   UPLOAD_DIR,
   MAX_FILE_SIZE,
@@ -219,9 +221,15 @@ export class MediaService {
 
   /**
    * Deletes a media asset and cleans up its file on disk.
-   * If linked to active posts, deletion is blocked unless explicitly unlinked.
+   * - Only OWNER and ADMIN roles are authorized.
+   * - If linked to active posts, deletion is blocked (409) unless explicitly forced.
+   * - Atomically cleans up ContentMedia relations and logs forced flag with unlinked post details.
    */
-  static async deleteMedia(id: string, userId: string, force: boolean = false) {
+  static async deleteMedia(id: string, user: AuthUser, force: boolean = false) {
+    if (user.role !== UserRole.OWNER && user.role !== UserRole.ADMIN) {
+      throw new Error('FORBIDDEN: Only Owners and Admins are authorized to delete media assets.');
+    }
+
     const asset = await prisma.mediaAsset.findUnique({
       where: { id },
       include: {
@@ -245,6 +253,9 @@ export class MediaService {
     const absolutePath = path.join(UPLOAD_DIR, asset.fileName);
     assertSafeStoragePath(absolutePath);
 
+    const unlinkedPostIds = asset.contentLinks.map((cl) => cl.contentPost.id);
+    const unlinkedPostTitles = asset.contentLinks.map((cl) => cl.contentPost.title);
+
     // Atomically delete relations and asset record
     await prisma.$transaction(async (tx) => {
       if (asset.contentLinks.length > 0) {
@@ -259,14 +270,18 @@ export class MediaService {
 
       await ActivityService.log({
         tx,
-        userId,
+        userId: user.id,
         action: 'MEDIA_DELETED',
         entityType: 'MEDIA_ASSET',
         entityId: id,
         metadata: {
+          assetId: id,
           fileName: asset.fileName,
           originalName: asset.originalName,
           fileSize: asset.fileSize,
+          forced: force,
+          unlinkedPostIds,
+          unlinkedPostTitles,
         },
       });
     });

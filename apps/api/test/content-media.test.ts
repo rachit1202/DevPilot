@@ -365,14 +365,14 @@ async function runContentMediaTests() {
       },
       payload: {
         title: 'Updated: Mastering TypeScript Generics in 2026',
-        status: PostStatus.APPROVED,
+        status: PostStatus.IN_REVIEW,
         hashtags: ['#typescript', '#coding', '#fullstack'],
       },
     });
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.data.post.title, 'Updated: Mastering TypeScript Generics in 2026');
-    assert.equal(body.data.post.status, PostStatus.APPROVED);
+    assert.equal(body.data.post.status, PostStatus.IN_REVIEW);
     assert.deepEqual(body.data.post.hashtags, ['#typescript', '#coding', '#fullstack']);
   });
 

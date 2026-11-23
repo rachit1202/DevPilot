@@ -2,6 +2,7 @@ import { FastifyReply, FastifyRequest } from 'fastify';
 import fs from 'fs';
 import { MediaService } from './media.service';
 import { mediaQuerySchema } from '@devpilot/validation';
+import { AuthUser } from '../../types/fastify';
 
 export class MediaController {
   static async upload(request: FastifyRequest, reply: FastifyReply) {
@@ -24,7 +25,7 @@ export class MediaController {
 
     try {
       const buffer = await data.toBuffer();
-      const user = request.user as unknown as { id: string };
+      const user = request.user as AuthUser;
 
       const asset = await MediaService.uploadMedia({
         buffer,
@@ -122,10 +123,10 @@ export class MediaController {
     const { id } = request.params as { id: string };
     const query = (request.query as { force?: string }) || {};
     const force = query.force === 'true';
-    const user = request.user as unknown as { id: string };
+    const user = request.user as AuthUser;
 
     try {
-      await MediaService.deleteMedia(id, user.id, force);
+      await MediaService.deleteMedia(id, user, force);
 
       return reply.status(200).send({
         success: true,
@@ -133,6 +134,14 @@ export class MediaController {
       });
     } catch (err: unknown) {
       const error = err as Error;
+      if (error.message.startsWith('FORBIDDEN')) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Forbidden',
+          message: error.message.replace(/^[A-Z_]+:\s*/, ''),
+        });
+      }
+
       if (error.message.startsWith('NOT_FOUND')) {
         return reply.status(404).send({
           success: false,
