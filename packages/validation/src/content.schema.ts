@@ -3,12 +3,12 @@ import { ContentType, ContentCategory, PostStatus } from '@devpilot/shared';
 
 export const createContentSchema = z.object({
   title: z.string().trim().min(3, { message: 'Title must be at least 3 characters' }).max(200),
-  caption: z.string().trim().min(5, { message: 'Caption must be at least 5 characters' }),
-  hashtags: z.array(z.string().trim().regex(/^#[a-zA-Z0-9_]+$/, { message: 'Hashtag must start with # and contain no spaces' })).default([]),
+  caption: z.string().trim().min(5, { message: 'Caption must be at least 5 characters' }).max(10000, { message: 'Caption must not exceed 10000 characters' }),
+  hashtags: z.array(z.string().trim().max(100).regex(/^#[a-zA-Z0-9_]+$/, { message: 'Hashtag must start with # and contain no spaces' })).max(30).default([]),
   cta: z.string().trim().max(300).optional().nullable(),
   contentType: z.nativeEnum(ContentType).default(ContentType.SINGLE_IMAGE),
   category: z.nativeEnum(ContentCategory).default(ContentCategory.WEB_DEV_TIPS),
-  mediaAssetIds: z.array(z.string().uuid()).default([]),
+  mediaAssetIds: z.array(z.string().uuid()).max(10).default([]),
   scheduledAt: z.string().datetime().optional().nullable(),
 });
 

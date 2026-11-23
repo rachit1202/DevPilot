@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { buildServer } from '../src/server';
 import { prisma } from '../src/db/prisma';
 import { UserRole } from '@devpilot/shared';
+import { updateBrandSchema, createContentSchema } from '@devpilot/validation';
 import { roleGuard } from '../src/middleware/role.guard';
 import { FastifyReply, FastifyRequest } from 'fastify';
 
@@ -319,8 +320,77 @@ async function runTests() {
     }
   });
 
-  // 15. Login Rate Limiter
-  await test('15. Login rate limiting blocks abusive attempts with 429 Too Many Requests', async () => {
+  // 15. Oversized String Payload Rejection (Zod length constraints)
+  await test('15. Oversized credentials (>128 chars password / >255 chars email) are rejected with 400', async () => {
+    const hugePassword = 'A'.repeat(200);
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      headers: { origin: frontendOrigin },
+      payload: {
+        email: 'admin@codeculture.dev',
+        password: hugePassword,
+      },
+    });
+    assert.equal(res.statusCode, 400);
+    const body = JSON.parse(res.body);
+    assert.equal(body.error, 'Validation failed');
+    const passwordIssue = body.issues?.find((i: any) => i.path === 'password');
+    assert.ok(passwordIssue, 'Expected password issue in validation response');
+    assert.match(passwordIssue.message, /Password must not exceed 128 characters/);
+  });
+
+  // 16. Fastify Body Limit Rejection (1MB strict payload limit)
+  await test('16. Request payload exceeding 1MB body limit is rejected with 413 Payload Too Large', async () => {
+    // Generate 1.2MB payload
+    const oversizedBody = JSON.stringify({
+      email: 'admin@codeculture.dev',
+      password: 'X'.repeat(1.2 * 1024 * 1024),
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      headers: {
+        'content-type': 'application/json',
+        origin: frontendOrigin,
+      },
+      payload: oversizedBody,
+    });
+    assert.equal(res.statusCode, 413, 'Expected 413 Payload Too Large for >1MB body');
+  });
+
+  // 17. Zod Constrained Collection & Memory Protection Verification
+  await test('17. Oversized collections & malformed arrays are rejected by Zod limits without memory exhaustion', async () => {
+    // Test oversized array exceeding max(50)
+    const oversizedTopics = Array.from({ length: 100 }, (_, i) => `topic-${i}`);
+    const parseResult = updateBrandSchema.safeParse({
+      brandName: 'CodeCulture',
+      tagline: 'Code. Create. Build. Repeat.',
+      primaryColor: '#8B5CF6',
+      secondaryColor: '#06B6D4',
+      tone: 'Engineering-focused, concise, educational',
+      audience: 'Developers, tech founders, engineers',
+      topics: oversizedTopics,
+    });
+    assert.equal(parseResult.success, false, 'Expected rejection of >50 topics');
+    if (!parseResult.success) {
+      const topicError = parseResult.error.issues.find((i) => i.path.includes('topics'));
+      assert.ok(topicError, 'Should report topics max length violation');
+    }
+
+    // Test malformed hashtag array exceeding max(30)
+    const oversizedHashtags = Array.from({ length: 50 }, (_, i) => `#tag${i}`);
+    const contentResult = createContentSchema.safeParse({
+      title: 'DevPilot Post',
+      caption: 'Valid caption content for DevPilot testing.',
+      hashtags: oversizedHashtags,
+    });
+    assert.equal(contentResult.success, false, 'Expected rejection of >30 hashtags');
+  });
+
+  // 18. Login Rate Limiter (Executed at end of suite to avoid throttling preceding tests)
+  await test('18. Login rate limiting blocks abusive attempts with 429 Too Many Requests', async () => {
     let rateLimited = false;
     for (let i = 0; i < 15; i++) {
       const res = await server.inject({

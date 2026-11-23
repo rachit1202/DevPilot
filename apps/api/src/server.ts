@@ -13,6 +13,7 @@ import { authRoutes } from './modules/auth/auth.routes';
 
 export function buildServer(): FastifyInstance {
   const server = fastify({
+    bodyLimit: 1048576, // 1MB maximum payload to prevent memory exhaustion & unbounded buffer allocation
     logger: {
       level: config.NODE_ENV === 'development' ? 'info' : 'warn',
       redact: ['req.headers.authorization', 'req.headers.cookie', 'req.body.password'],
@@ -54,9 +55,16 @@ export function buildServer(): FastifyInstance {
     hook: 'onRequest',
   });
 
-  // 4. JWT Authentication Plugin
+  // 4. JWT Authentication Plugin — Hardened with explicit HS256 pinning & cache disabled
   server.register(fastifyJwt, {
     secret: config.JWT_SECRET,
+    sign: {
+      algorithm: 'HS256',
+    },
+    verify: {
+      algorithms: ['HS256'],
+      cache: false, // Disables verifier caching, eliminating cache confusion & expired token cache persistence
+    },
   });
 
   // 5. Global Rate Limiter
