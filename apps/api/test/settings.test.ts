@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import bcrypt from 'bcryptjs';
 import { buildServer } from '../src/server';
 import { prisma } from '../src/db/prisma';
-import { UserRole, PostStatus, ContentType, ContentCategory } from '@devpilot/shared';
+import { UserRole, PostStatus, ContentType, ContentCategory, ianaLocalToUtc } from '@devpilot/shared';
+import { Prisma } from '@prisma/client';
+import { SettingsService } from '../src/modules/settings/settings.service';
 
 async function runSettingsTests() {
   console.log('\n======================================================');
@@ -103,6 +105,29 @@ async function runSettingsTests() {
   // Preserve initial brand state to restore after tests
   const initialBrand = await prisma.brandSettings.findFirst();
   assert.ok(initialBrand, 'Initial brand settings must exist in database');
+
+  // Reset settings to defaults at start of test run
+  await prisma.applicationSettings.updateMany({
+    data: {
+      timezone: 'Asia/Kolkata',
+      defaultLanguage: 'en',
+      timeFormat: '12h',
+      dateFormat: 'YYYY-MM-DD',
+      firstDayOfWeek: 0,
+      defaultView: 'month',
+    },
+  });
+  await prisma.brandSettings.update({
+    where: { isSingleton: true },
+    data: {
+      brandName: 'CodeCulture',
+      tagline: 'Code. Create. Build. Repeat.',
+      primaryColor: '#8B5CF6',
+      secondaryColor: '#06B6D4',
+      industry: 'Developer Education & Tech Media',
+      primaryLanguage: 'en',
+    },
+  });
 
   // =========================================================================
   // 1. Retrieve existing CodeCulture brand settings
@@ -468,12 +493,230 @@ async function runSettingsTests() {
     assert.equal(checkBrand.brandName, currentBrandName, 'Brand name must not be partially updated on validation failure');
   });
 
+  // =========================================================================
+  // 16. Database singleton enforcement for BrandSettings
+  // =========================================================================
+  await test('16. Database singleton enforcement for BrandSettings rejects duplicate record with P2002', async () => {
+    let errorCaught = false;
+    try {
+      await prisma.brandSettings.create({
+        data: {
+          brandName: 'CodeCulture', // duplicate of existing unique brand_name
+          tagline: 'Duplicate CodeCulture brand attempt',
+          primaryColor: '#123456',
+          secondaryColor: '#654321',
+        },
+      });
+    } catch (err: unknown) {
+      errorCaught = true;
+      assert.ok(err instanceof Prisma.PrismaClientKnownRequestError);
+      assert.equal((err as Prisma.PrismaClientKnownRequestError).code, 'P2002');
+    }
+    assert.equal(errorCaught, true, 'Database unique constraint must reject duplicate BrandSettings record');
+  });
+
+  // =========================================================================
+  // 17. Database singleton enforcement for ApplicationSettings
+  // =========================================================================
+  await test('17. Database singleton enforcement for ApplicationSettings rejects duplicate row with P2002', async () => {
+    let errorCaught = false;
+    try {
+      await prisma.applicationSettings.create({
+        data: {
+          isSingleton: true, // violates is_singleton unique constraint
+          timezone: 'UTC',
+          defaultLanguage: 'en',
+          timeFormat: '24h',
+          dateFormat: 'YYYY-MM-DD',
+          firstDayOfWeek: 1,
+          defaultView: 'week',
+        },
+      });
+    } catch (err: unknown) {
+      errorCaught = true;
+      assert.ok(err instanceof Prisma.PrismaClientKnownRequestError);
+      assert.equal((err as Prisma.PrismaClientKnownRequestError).code, 'P2002');
+    }
+    assert.equal(errorCaught, true, 'Database unique constraint must reject duplicate ApplicationSettings row');
+  });
+
+  // =========================================================================
+  // 18. Concurrent initialization protection
+  // =========================================================================
+  await test('18. Concurrent simultaneous calls to getBrandSettings and getApplicationSettings resolve safely', async () => {
+    const brandPromises = Array.from({ length: 10 }).map(() => SettingsService.getBrandSettings());
+    const appPromises = Array.from({ length: 10 }).map(() => SettingsService.getApplicationSettings());
+
+    const brands = await Promise.all(brandPromises);
+    const apps = await Promise.all(appPromises);
+
+    assert.equal(brands.length, 10);
+    assert.equal(apps.length, 10);
+
+    // Verify all return the exact same singleton IDs
+    const firstBrandId = brands[0].id;
+    for (const b of brands) {
+      assert.equal(b.id, firstBrandId);
+    }
+
+    const firstAppId = apps[0].id;
+    for (const a of apps) {
+      assert.equal(a.id, firstAppId);
+    }
+  });
+
+  // =========================================================================
+  // 19. No-op updates do not create activity logs
+  // =========================================================================
+  await test('19. No-op updates with identical values do not generate redundant activity logs', async () => {
+    const currentApp = await SettingsService.getApplicationSettings();
+
+    // Count activity logs before no-op
+    const logsBefore = await prisma.activityLog.count({
+      where: { entityType: 'APPLICATION_SETTINGS', entityId: currentApp.id },
+    });
+
+    // Send identical settings values
+    const res = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/settings/app',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: {
+        timezone: currentApp.timezone,
+        defaultLanguage: currentApp.defaultLanguage,
+        timeFormat: currentApp.timeFormat,
+        dateFormat: currentApp.dateFormat,
+        firstDayOfWeek: currentApp.firstDayOfWeek,
+        defaultView: currentApp.defaultView,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+
+    // Verify log count did not increase
+    const logsAfter = await prisma.activityLog.count({
+      where: { entityType: 'APPLICATION_SETTINGS', entityId: currentApp.id },
+    });
+    assert.equal(logsAfter, logsBefore, 'No-op update must not generate a new ActivityLog record');
+  });
+
+  // =========================================================================
+  // 20. Real changes generate correct activity logs with updatedFields
+  // =========================================================================
+  await test('20. Real settings modifications generate activity logs with exact updatedFields metadata', async () => {
+    const currentApp = await SettingsService.getApplicationSettings();
+    const newTz = currentApp.timezone === 'UTC' ? 'Asia/Kolkata' : 'UTC';
+
+    const res = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/settings/app',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: {
+        timezone: newTz,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+
+    const latestLog = await prisma.activityLog.findFirst({
+      where: { entityType: 'APPLICATION_SETTINGS', entityId: currentApp.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    assert.ok(latestLog);
+    assert.equal(latestLog.action, 'APPLICATION_SETTINGS_UPDATED');
+    const meta = latestLog.metadata as Record<string, unknown>;
+    assert.deepEqual(meta.updatedFields, ['timezone']);
+    assert.equal(meta.newTimezone, newTz);
+  });
+
+  // =========================================================================
+  // 21. Calendar API consumes persisted application timezone dynamically
+  // =========================================================================
+  await test('21. Calendar API retrieves and applies persisted timezone (e.g. America/New_York and UTC)', async () => {
+    // 1. Set timezone to America/New_York
+    await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/settings/app',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: { timezone: 'America/New_York' },
+    });
+
+    const calResNY = await server.inject({
+      method: 'GET',
+      url: '/api/v1/calendar?startDate=2026-11-01&endDate=2026-11-30',
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(calResNY.statusCode, 200);
+    const bodyNY = JSON.parse(calResNY.body);
+    assert.equal(bodyNY.data.timezone, 'America/New_York');
+    // In America/New_York on 2026-11-01 (EDT UTC-4), midnight corresponds to 04:00 UTC
+    assert.equal(bodyNY.data.range.startDate, '2026-11-01T04:00:00.000Z');
+
+    // 2. Set timezone to UTC
+    await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/settings/app',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: { timezone: 'UTC' },
+    });
+
+    const calResUTC = await server.inject({
+      method: 'GET',
+      url: '/api/v1/calendar?startDate=2026-11-01&endDate=2026-11-30',
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(calResUTC.statusCode, 200);
+    const bodyUTC = JSON.parse(calResUTC.body);
+    assert.equal(bodyUTC.data.timezone, 'UTC');
+    assert.equal(bodyUTC.data.range.startDate, '2026-11-01T00:00:00.000Z');
+  });
+
+  // =========================================================================
+  // 22. America/New_York DST boundary behavior
+  // =========================================================================
+  await test('22. IANA timezone calculations handle America/New_York summer DST (EDT UTC-4) vs winter (EST UTC-5)', async () => {
+    // Summer date: 2026-07-15 10:00 AM NY (EDT = UTC-4 -> 14:00 UTC)
+    const summerUtc = ianaLocalToUtc(2026, 7, 15, 10, 0, 0, 'America/New_York');
+    assert.equal(summerUtc.toISOString(), '2026-07-15T14:00:00.000Z');
+
+    // Winter date: 2026-12-15 10:00 AM NY (EST = UTC-5 -> 15:00 UTC)
+    const winterUtc = ianaLocalToUtc(2026, 12, 15, 10, 0, 0, 'America/New_York');
+    assert.equal(winterUtc.toISOString(), '2026-12-15T15:00:00.000Z');
+  });
+
+  // =========================================================================
+  // 23. Display preferences reflect in calendar responses
+  // =========================================================================
+  await test('23. Calendar responses include configured display preferences (firstDayOfWeek, timeFormat, defaultView)', async () => {
+    await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/settings/app',
+      headers: { cookie: ownerCookie, origin: frontendOrigin },
+      payload: {
+        firstDayOfWeek: 1, // Monday
+        defaultView: 'week',
+        timeFormat: '24h',
+        dateFormat: 'DD/MM/YYYY',
+      },
+    });
+
+    const res = await server.inject({
+      method: 'GET',
+      url: '/api/v1/calendar?startDate=2026-11-01&endDate=2026-11-30',
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.data.firstDayOfWeek, 1);
+    assert.equal(body.data.defaultView, 'week');
+    assert.equal(body.data.timeFormat, '24h');
+    assert.equal(body.data.dateFormat, 'DD/MM/YYYY');
+  });
+
   // Cleanup: Restore original CodeCulture brand and default settings
   await prisma.brandSettings.update({
-    where: { id: initialBrand.id },
+    where: { isSingleton: true },
     data: {
-      brandName: initialBrand.brandName,
-      tagline: initialBrand.tagline,
+      brandName: 'CodeCulture',
+      tagline: 'Code. Create. Build. Repeat.',
       websiteUrl: initialBrand.websiteUrl,
       primaryColor: initialBrand.primaryColor,
       secondaryColor: initialBrand.secondaryColor,
@@ -501,7 +744,7 @@ async function runSettingsTests() {
   });
 
   console.log('\n----------------------------------------');
-  console.log(`  Settings Tests completed: 15 total`);
+  console.log(`  Settings Tests completed: 23 total`);
   console.log(`  Passed: ${passed}`);
   console.log(`  Failed: ${failed}`);
   console.log('----------------------------------------\n');

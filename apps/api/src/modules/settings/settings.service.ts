@@ -8,50 +8,41 @@ import { config } from '../../config/env';
 export class SettingsService {
   /**
    * Retrieves current BrandSettings.
-   * Ensures the initial CodeCulture record exists if not already present.
+   * Concurrency-safe singleton retrieval and initialization using upsert on isSingleton.
    */
   static async getBrandSettings() {
-    let brand = await prisma.brandSettings.findFirst({
-      where: { brandName: 'CodeCulture' },
+    return prisma.brandSettings.upsert({
+      where: { isSingleton: true },
+      update: {},
+      create: {
+        isSingleton: true,
+        brandName: 'CodeCulture',
+        tagline: 'Code. Create. Build. Repeat.',
+        websiteUrl: 'https://codeculture.dev',
+        primaryColor: '#8B5CF6',
+        secondaryColor: '#06B6D4',
+        tone: 'Modern, developer-friendly, humorous but informative, creative',
+        audience: 'Web developers, students, freelancers, AI enthusiasts, tech founders',
+        industry: 'Developer Education & Tech Media',
+        primaryLanguage: 'en',
+        topics: [
+          'Coding Memes',
+          'Developer Life',
+          'AI & Vibe Coding',
+          'Web Development Tips',
+          'Programming Tutorials',
+          'Tech News & Trends',
+          'Tools & Resources',
+        ],
+        avoidTopics: ['Partisan politics', 'Unverified rumors', 'Hate speech'],
+        ctaDefaults: 'Follow @CodeCulture for daily web dev insights, vibe coding tips, and tech humor.',
+      },
     });
-
-    if (!brand) {
-      brand = await prisma.brandSettings.findFirst();
-    }
-
-    if (!brand) {
-      brand = await prisma.brandSettings.create({
-        data: {
-          brandName: 'CodeCulture',
-          tagline: 'Code. Create. Build. Repeat.',
-          websiteUrl: 'https://codeculture.dev',
-          primaryColor: '#8B5CF6',
-          secondaryColor: '#06B6D4',
-          tone: 'Modern, developer-friendly, humorous but informative, creative',
-          audience: 'Web developers, students, freelancers, AI enthusiasts, tech founders',
-          industry: 'Developer Education & Tech Media',
-          primaryLanguage: 'en',
-          topics: [
-            'Coding Memes',
-            'Developer Life',
-            'AI & Vibe Coding',
-            'Web Development Tips',
-            'Programming Tutorials',
-            'Tech News & Trends',
-            'Tools & Resources',
-          ],
-          avoidTopics: ['Partisan politics', 'Unverified rumors', 'Hate speech'],
-          ctaDefaults: 'Follow @CodeCulture for daily web dev insights, vibe coding tips, and tech humor.',
-        },
-      });
-    }
-
-    return brand;
   }
 
   /**
    * Updates BrandSettings.
-   * Enforces OWNER/ADMIN permission, validates inputs, logs changes.
+   * Enforces OWNER/ADMIN permission, validates inputs, logs changes only on real modifications.
    */
   static async updateBrandSettings(input: UpdateBrandInput, user: AuthUser) {
     if (user.role !== UserRole.OWNER && user.role !== UserRole.ADMIN) {
@@ -59,6 +50,44 @@ export class SettingsService {
     }
 
     const currentBrand = await this.getBrandSettings();
+
+    // Determine which fields actually changed
+    const changedFields: string[] = [];
+    const fieldsToCheck: (keyof UpdateBrandInput)[] = [
+      'brandName',
+      'tagline',
+      'description',
+      'websiteUrl',
+      'logoUrl',
+      'primaryColor',
+      'secondaryColor',
+      'tone',
+      'audience',
+      'industry',
+      'primaryLanguage',
+      'guidelines',
+      'topics',
+      'avoidTopics',
+      'ctaDefaults',
+    ];
+
+    for (const field of fieldsToCheck) {
+      if (input[field] !== undefined) {
+        const newVal = input[field];
+        const oldVal = (currentBrand as Record<string, unknown>)[field];
+        if (Array.isArray(newVal) && Array.isArray(oldVal)) {
+          if (JSON.stringify(newVal) !== JSON.stringify(oldVal)) {
+            changedFields.push(field);
+          }
+        } else {
+          const normNew = newVal === null || newVal === undefined ? null : newVal;
+          const normOld = oldVal === null || oldVal === undefined ? null : oldVal;
+          if (normNew !== normOld) {
+            changedFields.push(field);
+          }
+        }
+      }
+    }
 
     const updated = await prisma.brandSettings.update({
       where: { id: currentBrand.id },
@@ -81,46 +110,46 @@ export class SettingsService {
       },
     });
 
-    await ActivityService.log({
-      userId: user.id,
-      action: 'BRAND_SETTINGS_UPDATED',
-      entityType: 'BRAND_SETTINGS',
-      entityId: updated.id,
-      metadata: {
-        updatedFields: Object.keys(input),
-        brandName: updated.brandName,
-      },
-    });
+    // Only create an activity log if real changes occurred
+    if (changedFields.length > 0) {
+      await ActivityService.log({
+        userId: user.id,
+        action: 'BRAND_SETTINGS_UPDATED',
+        entityType: 'BRAND_SETTINGS',
+        entityId: updated.id,
+        metadata: {
+          updatedFields: changedFields,
+          brandName: updated.brandName,
+        },
+      });
+    }
 
     return updated;
   }
 
   /**
    * Retrieves current ApplicationSettings.
-   * Ensures default application configuration exists.
+   * Concurrency-safe singleton retrieval and initialization using upsert on isSingleton constraint.
    */
   static async getApplicationSettings() {
-    let appSettings = await prisma.applicationSettings.findFirst();
-
-    if (!appSettings) {
-      appSettings = await prisma.applicationSettings.create({
-        data: {
-          timezone: config.APP_TIMEZONE || 'Asia/Kolkata',
-          defaultLanguage: 'en',
-          timeFormat: '12h',
-          dateFormat: 'YYYY-MM-DD',
-          firstDayOfWeek: 0,
-          defaultView: 'month',
-        },
-      });
-    }
-
-    return appSettings;
+    return prisma.applicationSettings.upsert({
+      where: { isSingleton: true },
+      update: {},
+      create: {
+        isSingleton: true,
+        timezone: config.APP_TIMEZONE || 'Asia/Kolkata',
+        defaultLanguage: 'en',
+        timeFormat: '12h',
+        dateFormat: 'YYYY-MM-DD',
+        firstDayOfWeek: 0,
+        defaultView: 'month',
+      },
+    });
   }
 
   /**
    * Updates ApplicationSettings.
-   * Enforces OWNER/ADMIN permission, validates timezone, logs changes.
+   * Enforces OWNER/ADMIN permission, validates timezone, logs changes only on real modifications.
    * INVARIANT: Changing timezone does not mutate stored UTC schedule dates.
    */
   static async updateApplicationSettings(input: UpdateApplicationSettingsInput, user: AuthUser) {
@@ -129,6 +158,27 @@ export class SettingsService {
     }
 
     const currentSettings = await this.getApplicationSettings();
+
+    // Determine which fields actually changed
+    const changedFields: string[] = [];
+    const fieldsToCheck: (keyof UpdateApplicationSettingsInput)[] = [
+      'timezone',
+      'defaultLanguage',
+      'timeFormat',
+      'dateFormat',
+      'firstDayOfWeek',
+      'defaultView',
+    ];
+
+    for (const field of fieldsToCheck) {
+      if (input[field] !== undefined) {
+        const newVal = input[field];
+        const oldVal = (currentSettings as Record<string, unknown>)[field];
+        if (newVal !== oldVal) {
+          changedFields.push(field);
+        }
+      }
+    }
 
     const updated = await prisma.applicationSettings.update({
       where: { id: currentSettings.id },
@@ -142,17 +192,21 @@ export class SettingsService {
       },
     });
 
-    await ActivityService.log({
-      userId: user.id,
-      action: 'APPLICATION_SETTINGS_UPDATED',
-      entityType: 'APPLICATION_SETTINGS',
-      entityId: updated.id,
-      metadata: {
-        updatedFields: Object.keys(input),
-        newTimezone: updated.timezone,
-      },
-    });
+    // Only create an activity log if real changes occurred
+    if (changedFields.length > 0) {
+      await ActivityService.log({
+        userId: user.id,
+        action: 'APPLICATION_SETTINGS_UPDATED',
+        entityType: 'APPLICATION_SETTINGS',
+        entityId: updated.id,
+        metadata: {
+          updatedFields: changedFields,
+          newTimezone: updated.timezone,
+        },
+      });
+    }
 
     return updated;
   }
 }
+

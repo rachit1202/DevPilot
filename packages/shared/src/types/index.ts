@@ -32,6 +32,7 @@ export interface BrandSettings {
 
 export interface ApplicationSettings {
   id: string;
+  isSingleton?: boolean;
   timezone: string;
   defaultLanguage: string;
   timeFormat: string;

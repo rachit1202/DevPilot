@@ -7,7 +7,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { apiRequest, API_BASE_URL } from '@/lib/api';
-import { ContentType, ContentCategory, PostStatus } from '@devpilot/shared';
+import {
+  ContentType,
+  ContentCategory,
+  PostStatus,
+  ianaLocalToUtc,
+  getLocalParts,
+  parseIanaDateTimeInput,
+  formatIanaDateStr,
+  formatIanaTimeStr,
+  getTimezoneLabel,
+} from '@devpilot/shared';
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -32,7 +42,6 @@ import {
 export type CalendarViewMode = 'month' | 'week' | 'day' | 'list';
 
 export const APP_TIMEZONE = 'Asia/Kolkata';
-const KOLKATA_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 
 export function kolkataToUtc(
   year: number,
@@ -43,28 +52,27 @@ export function kolkataToUtc(
   seconds = 0,
   ms = 0
 ): Date {
-  return new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds, ms) - KOLKATA_OFFSET_MS);
+  return new Date(ianaLocalToUtc(year, month, day, hours, minutes, seconds, 'Asia/Kolkata').getTime() + ms);
 }
 
-export function formatToKolkataDateStr(dateOrIso: Date | string): string {
-  const d = typeof dateOrIso === 'string' ? new Date(dateOrIso) : dateOrIso;
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: APP_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(d);
+export function formatToKolkataDateStr(dateOrIso: Date | string, tz = 'Asia/Kolkata'): string {
+  return formatIanaDateStr(dateOrIso, tz, 'YYYY-MM-DD');
 }
 
-export function parseKolkataDateTimeInput(dtStr: string): Date {
-  const [dPart, tPart] = dtStr.split('T');
-  const [y, m, d] = dPart.split('-').map(Number);
-  const [hh, mm] = (tPart || '00:00').split(':').map(Number);
-  return kolkataToUtc(y, m, d, hh, mm, 0, 0);
+export function parseKolkataDateTimeInput(dtStr: string, tz = 'Asia/Kolkata'): Date {
+  return parseIanaDateTimeInput(dtStr, tz);
 }
 
 function pad(n: number): string {
   return String(n).padStart(2, '0');
+}
+
+export interface ApplicationPreferences {
+  timezone: string;
+  timeFormat: '12h' | '24h';
+  dateFormat: 'YYYY-MM-DD' | 'DD/MM/YYYY' | 'MM/DD/YYYY';
+  firstDayOfWeek: number;
+  defaultView: CalendarViewMode;
 }
 
 export interface CalendarEntry {
@@ -117,6 +125,14 @@ export interface ApprovedPostOption {
 }
 
 export default function ContentCalendarPage() {
+  const [appSettings, setAppSettings] = useState<ApplicationPreferences>({
+    timezone: 'Asia/Kolkata',
+    timeFormat: '12h',
+    dateFormat: 'YYYY-MM-DD',
+    firstDayOfWeek: 0,
+    defaultView: 'month',
+  });
+
   const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
@@ -143,39 +159,72 @@ export default function ContentCalendarPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Calculate Date Ranges based on viewMode and currentDate in Asia/Kolkata timezone
+  // Load persisted application settings on mount
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const res = await apiRequest<{
+          success: boolean;
+          data: ApplicationPreferences;
+        }>('/settings/app');
+        if (res.success && res.data) {
+          const loaded: ApplicationPreferences = {
+            timezone: res.data.timezone || 'Asia/Kolkata',
+            timeFormat: res.data.timeFormat || '12h',
+            dateFormat: res.data.dateFormat || 'YYYY-MM-DD',
+            firstDayOfWeek: res.data.firstDayOfWeek ?? 0,
+            defaultView: res.data.defaultView || 'month',
+          };
+          setAppSettings(loaded);
+          setViewMode(loaded.defaultView);
+        }
+      } catch (err) {
+        console.warn('Could not load application settings, using defaults:', err);
+      }
+    }
+    loadSettings();
+  }, []);
+
+  // Calculate Date Ranges based on viewMode and currentDate in configured dynamic timezone
   const dateRange = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth() + 1; // 1-indexed
+    const tz = appSettings.timezone;
+    const curParts = getLocalParts(currentDate, tz);
+    const year = curParts.year;
+    const month = curParts.month; // 1-indexed
 
     if (viewMode === 'month') {
-      const firstDayIndex = new Date(year, month - 1, 1).getDay(); // 0 is Sunday
-      const daysInMonth = new Date(year, month, 0).getDate();
-      const remaining = (7 - ((firstDayIndex + daysInMonth) % 7)) % 7;
-      // Start from leading grid cell local midnight IST converted to UTC
-      const start = kolkataToUtc(year, month, 1 - firstDayIndex, 0, 0, 0, 0);
-      // End at trailing grid cell local end-of-day IST converted to UTC
-      const end = kolkataToUtc(year, month, daysInMonth + remaining, 23, 59, 59, 999);
+      const firstDayLocal = getLocalParts(ianaLocalToUtc(year, month, 1, 0, 0, 0, tz), tz);
+      const leadingCount = (firstDayLocal.weekdayIndex - (appSettings.firstDayOfWeek ?? 0) + 7) % 7;
+      const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+      const trailingCount = (7 - ((leadingCount + daysInMonth) % 7)) % 7;
+
+      const start = ianaLocalToUtc(year, month, 1 - leadingCount, 0, 0, 0, tz);
+      const end = new Date(
+        ianaLocalToUtc(year, month, daysInMonth + trailingCount, 23, 59, 59, tz).getTime() + 999
+      );
       return { start, end };
     } else if (viewMode === 'week') {
-      const curr = new Date(currentDate);
-      const day = curr.getDay(); // 0 is Sunday
-      const diff = curr.getDate() - day; // start on Sunday
-      const sunday = new Date(curr.setDate(diff));
-      const start = kolkataToUtc(sunday.getFullYear(), sunday.getMonth() + 1, sunday.getDate(), 0, 0, 0, 0);
-      const end = kolkataToUtc(sunday.getFullYear(), sunday.getMonth() + 1, sunday.getDate() + 6, 23, 59, 59, 999);
+      const diff = (curParts.weekdayIndex - (appSettings.firstDayOfWeek ?? 0) + 7) % 7;
+      const start = ianaLocalToUtc(curParts.year, curParts.month, curParts.day - diff, 0, 0, 0, tz);
+      const end = new Date(
+        ianaLocalToUtc(curParts.year, curParts.month, curParts.day - diff + 6, 23, 59, 59, tz).getTime() + 999
+      );
       return { start, end };
     } else if (viewMode === 'day') {
-      const start = kolkataToUtc(currentDate.getFullYear(), currentDate.getMonth() + 1, currentDate.getDate(), 0, 0, 0, 0);
-      const end = kolkataToUtc(currentDate.getFullYear(), currentDate.getMonth() + 1, currentDate.getDate(), 23, 59, 59, 999);
+      const start = ianaLocalToUtc(curParts.year, curParts.month, curParts.day, 0, 0, 0, tz);
+      const end = new Date(
+        ianaLocalToUtc(curParts.year, curParts.month, curParts.day, 23, 59, 59, tz).getTime() + 999
+      );
       return { start, end };
     } else {
-      // List view: 60-day window from start of current month
-      const start = kolkataToUtc(year, month, 1, 0, 0, 0, 0);
-      const end = kolkataToUtc(year, month + 2, 0, 23, 59, 59, 999);
+      // List view: 60-day window from start of current month in effective timezone
+      const start = ianaLocalToUtc(year, month, 1, 0, 0, 0, tz);
+      const end = new Date(
+        ianaLocalToUtc(year, month + 2, 0, 23, 59, 59, tz).getTime() + 999
+      );
       return { start, end };
     }
-  }, [currentDate, viewMode]);
+  }, [currentDate, viewMode, appSettings]);
 
   // Fetch Calendar Entries
   const fetchCalendarEntries = useCallback(async () => {
@@ -193,6 +242,10 @@ export default function ContentCalendarPage() {
         success: boolean;
         data: {
           timezone: string;
+          timeFormat?: '12h' | '24h';
+          dateFormat?: 'YYYY-MM-DD' | 'DD/MM/YYYY' | 'MM/DD/YYYY';
+          firstDayOfWeek?: number;
+          defaultView?: CalendarViewMode;
           total: number;
           entries: CalendarEntry[];
         };
@@ -200,6 +253,16 @@ export default function ContentCalendarPage() {
 
       if (res.success && res.data) {
         setEntries(res.data.entries || []);
+        if (res.data.timezone && res.data.timezone !== appSettings.timezone) {
+          setAppSettings((prev) => ({
+            ...prev,
+            timezone: res.data.timezone,
+            timeFormat: res.data.timeFormat || prev.timeFormat,
+            dateFormat: res.data.dateFormat || prev.dateFormat,
+            firstDayOfWeek: res.data.firstDayOfWeek ?? prev.firstDayOfWeek,
+            defaultView: res.data.defaultView || prev.defaultView,
+          }));
+        }
       }
     } catch (err: unknown) {
       const e = err as Error;
@@ -207,7 +270,7 @@ export default function ContentCalendarPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [dateRange, statusFilter, contentTypeFilter]);
+  }, [dateRange, statusFilter, contentTypeFilter, appSettings.timezone]);
 
   useEffect(() => {
     fetchCalendarEntries();
@@ -243,26 +306,25 @@ export default function ContentCalendarPage() {
     }
   }, []);
 
-  // Open Schedule Modal with default date (tomorrow at 10:00 AM IST)
+  // Open Schedule Modal with default date in configured timezone
   const openScheduleModal = (presetDate?: Date) => {
     fetchApprovedPosts();
+    const tz = appSettings.timezone;
     const target = presetDate || new Date(Date.now() + 24 * 60 * 60 * 1000);
-    const dateStr = formatToKolkataDateStr(target);
+    const p = getLocalParts(target, tz);
+    const dateStr = `${p.year}-${pad(p.month)}-${pad(p.day)}`;
     setScheduleDateTime(`${dateStr}T10:00`);
     setFormError(null);
     setShowScheduleModal(true);
   };
 
-  // Open Reschedule Modal with existing scheduled date in Asia/Kolkata
+  // Open Reschedule Modal with existing scheduled date in configured timezone
   const openRescheduleModal = (entry: CalendarEntry) => {
     setSelectedSchedule(entry);
-    const dateStr = formatToKolkataDateStr(entry.scheduledAt);
-    const timeStr = new Intl.DateTimeFormat('en-GB', {
-      timeZone: APP_TIMEZONE,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).format(new Date(entry.scheduledAt));
+    const tz = appSettings.timezone;
+    const p = getLocalParts(entry.scheduledAt, tz);
+    const dateStr = `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+    const timeStr = `${pad(p.hour)}:${pad(p.minute)}`;
     setScheduleDateTime(`${dateStr}T${timeStr}`);
     setFormError(null);
     setShowRescheduleModal(true);
@@ -280,7 +342,7 @@ export default function ContentCalendarPage() {
       return;
     }
 
-    const scheduledDate = parseKolkataDateTimeInput(scheduleDateTime);
+    const scheduledDate = parseIanaDateTimeInput(scheduleDateTime, appSettings.timezone);
     if (isNaN(scheduledDate.getTime())) {
       setFormError('Please select a valid scheduled date and time.');
       return;
@@ -319,7 +381,7 @@ export default function ContentCalendarPage() {
     e.preventDefault();
     if (!selectedSchedule) return;
 
-    const newDate = parseKolkataDateTimeInput(scheduleDateTime);
+    const newDate = parseIanaDateTimeInput(scheduleDateTime, appSettings.timezone);
     if (isNaN(newDate.getTime())) {
       setFormError('Please select a valid rescheduled date and time.');
       return;
@@ -340,7 +402,7 @@ export default function ContentCalendarPage() {
         },
       });
 
-      setSuccessMessage(`Post rescheduled to ${newDate.toLocaleString()}.`);
+      setSuccessMessage(`Post rescheduled to ${formatIanaDateStr(newDate, appSettings.timezone, appSettings.dateFormat)} ${formatIanaTimeStr(newDate, appSettings.timezone, appSettings.timeFormat)}.`);
       setTimeout(() => setSuccessMessage(null), 4000);
       setShowRescheduleModal(false);
       setSelectedSchedule(null);
@@ -422,56 +484,70 @@ export default function ContentCalendarPage() {
 
   // Period title label for header
   const periodTitle = useMemo(() => {
+    const tz = appSettings.timezone;
     if (viewMode === 'month') {
-      return new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, month: 'long', year: 'numeric' }).format(currentDate);
+      return new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', year: 'numeric' }).format(currentDate);
     } else if (viewMode === 'week') {
-      const s = new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, month: 'short', day: 'numeric' }).format(dateRange.start);
-      const e = new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, month: 'short', day: 'numeric', year: 'numeric' }).format(dateRange.end);
+      const s = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric' }).format(dateRange.start);
+      const e = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric', year: 'numeric' }).format(dateRange.end);
       return `${s} – ${e}`;
     } else if (viewMode === 'day') {
-      return new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(currentDate);
+      return new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(currentDate);
     } else {
-      return `Upcoming Slots: ${new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, month: 'long', year: 'numeric' }).format(currentDate)}`;
+      return `Upcoming Slots: ${new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', year: 'numeric' }).format(currentDate)}`;
     }
-  }, [viewMode, currentDate, dateRange]);
+  }, [viewMode, currentDate, dateRange, appSettings.timezone]);
 
-  // Days in month calculation for Month grid
+  // Ordered weekday headers according to firstDayOfWeek preference
+  const ALL_WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  const orderedWeekdays = useMemo(() => {
+    const start = (appSettings.firstDayOfWeek ?? 0) % 7;
+    return [...ALL_WEEKDAYS.slice(start), ...ALL_WEEKDAYS.slice(0, start)];
+  }, [appSettings.firstDayOfWeek]);
+
+  // Days in month calculation for Month grid using configured timezone & firstDayOfWeek
   const monthDays = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const firstDayIndex = new Date(year, month, 1).getDay(); // 0 is Sunday
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const tz = appSettings.timezone;
+    const curParts = getLocalParts(currentDate, tz);
+    const year = curParts.year;
+    const month = curParts.month; // 1-indexed
+
+    const firstDayLocal = getLocalParts(ianaLocalToUtc(year, month, 1, 0, 0, 0, tz), tz);
+    const leadingCount = (firstDayLocal.weekdayIndex - (appSettings.firstDayOfWeek ?? 0) + 7) % 7;
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const prevMonthDays = new Date(Date.UTC(year, month - 1, 0)).getUTCDate();
 
     const days: Array<{ date: Date; dateStr: string; isCurrentMonth: boolean }> = [];
 
     // Leading days from previous month
-    const prevMonthDays = new Date(year, month, 0).getDate();
-    for (let i = firstDayIndex - 1; i >= 0; i--) {
+    for (let i = leadingCount - 1; i >= 0; i--) {
       const dayNum = prevMonthDays - i;
-      const d = new Date(year, month - 1, dayNum);
-      const prevDate = new Date(year, month - 1, dayNum);
-      const dateStr = `${prevDate.getFullYear()}-${pad(prevDate.getMonth() + 1)}-${pad(dayNum)}`;
+      const d = ianaLocalToUtc(year, month - 1, dayNum, 12, 0, 0, tz);
+      const p = getLocalParts(d, tz);
+      const dateStr = `${p.year}-${pad(p.month)}-${pad(p.day)}`;
       days.push({ date: d, dateStr, isCurrentMonth: false });
     }
 
     // Days in current month
     for (let i = 1; i <= daysInMonth; i++) {
-      const d = new Date(year, month, i);
-      const dateStr = `${year}-${pad(month + 1)}-${pad(i)}`;
+      const d = ianaLocalToUtc(year, month, i, 12, 0, 0, tz);
+      const p = getLocalParts(d, tz);
+      const dateStr = `${p.year}-${pad(p.month)}-${pad(p.day)}`;
       days.push({ date: d, dateStr, isCurrentMonth: true });
     }
 
     // Trailing days to fill 35 or 42 grid cells
     const remaining = (7 - (days.length % 7)) % 7;
     for (let i = 1; i <= remaining; i++) {
-      const d = new Date(year, month + 1, i);
-      const nextDate = new Date(year, month + 1, i);
-      const dateStr = `${nextDate.getFullYear()}-${pad(nextDate.getMonth() + 1)}-${pad(i)}`;
+      const d = ianaLocalToUtc(year, month + 1, i, 12, 0, 0, tz);
+      const p = getLocalParts(d, tz);
+      const dateStr = `${p.year}-${pad(p.month)}-${pad(p.day)}`;
       days.push({ date: d, dateStr, isCurrentMonth: false });
     }
 
     return days;
-  }, [currentDate]);
+  }, [currentDate, appSettings.timezone, appSettings.firstDayOfWeek]);
+
 
   // Helper to map content type badge
   const formatContentType = (type: ContentType) => {
@@ -623,7 +699,7 @@ export default function ContentCalendarPage() {
           {/* Timezone Indicator */}
           <div className="flex items-center gap-1.5 text-[11px] text-devpilot-subtle px-2.5 py-1 rounded-md bg-devpilot-bg border border-devpilot-border">
             <Clock className="w-3 h-3 text-devpilot-cyan" />
-            <span>Asia/Kolkata (UTC+05:30)</span>
+            <span>{getTimezoneLabel(appSettings.timezone)}</span>
           </div>
 
           <Button
@@ -659,24 +735,20 @@ export default function ContentCalendarPage() {
             <div className="rounded-2xl border border-devpilot-border bg-devpilot-card overflow-hidden shadow-xl">
               {/* Day of Week Headers */}
               <div className="grid grid-cols-7 border-b border-devpilot-border text-center bg-black/40 text-[11px] font-semibold text-devpilot-subtle py-2.5">
-                <span>SUN</span>
-                <span>MON</span>
-                <span>TUE</span>
-                <span>WED</span>
-                <span>THU</span>
-                <span>FRI</span>
-                <span>SAT</span>
+                {orderedWeekdays.map((w) => (
+                  <span key={w}>{w}</span>
+                ))}
               </div>
 
               {/* Month Days Grid */}
               <div className="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-devpilot-border">
                 {monthDays.map(({ date, dateStr, isCurrentMonth }, idx) => {
                   const dayEntries = entries.filter((e) => {
-                    const entryDate = formatToKolkataDateStr(e.scheduledAt);
+                    const entryDate = formatIanaDateStr(e.scheduledAt, appSettings.timezone, 'YYYY-MM-DD');
                     return entryDate === dateStr;
                   });
 
-                  const isToday = formatToKolkataDateStr(new Date()) === dateStr;
+                  const isToday = formatIanaDateStr(new Date(), appSettings.timezone, 'YYYY-MM-DD') === dateStr;
 
                   return (
                     <div
@@ -695,7 +767,7 @@ export default function ContentCalendarPage() {
                               : 'text-devpilot-muted'
                           }`}
                         >
-                          {date.getDate()}
+                          {getLocalParts(date, appSettings.timezone).day}
                         </span>
                         {isCurrentMonth && (
                           <button
@@ -721,7 +793,7 @@ export default function ContentCalendarPage() {
                               {entry.post.title}
                             </span>
                             <span className="text-[9px] text-devpilot-subtle font-mono shrink-0">
-                              {new Intl.DateTimeFormat('en-IN', { timeZone: APP_TIMEZONE, hour: '2-digit', minute: '2-digit' }).format(new Date(entry.scheduledAt))}
+                              {formatIanaTimeStr(entry.scheduledAt, appSettings.timezone, appSettings.timeFormat)}
                             </span>
                           </div>
                         ))}
@@ -738,12 +810,15 @@ export default function ContentCalendarPage() {
             <div className="rounded-2xl border border-devpilot-border bg-devpilot-card overflow-hidden shadow-xl">
               <div className="grid grid-cols-7 divide-x divide-devpilot-border">
                 {Array.from({ length: 7 }).map((_, idx) => {
-                  const dayDate = new Date(dateRange.start.getTime() + idx * 24 * 60 * 60 * 1000 + 1000);
-                  const dateStr = formatToKolkataDateStr(dayDate);
-                  const isToday = formatToKolkataDateStr(new Date()) === dateStr;
+                  const curParts = getLocalParts(currentDate, appSettings.timezone);
+                  const diff = (curParts.weekdayIndex - (appSettings.firstDayOfWeek ?? 0) + 7) % 7;
+                  const dayDate = ianaLocalToUtc(curParts.year, curParts.month, curParts.day - diff + idx, 12, 0, 0, appSettings.timezone);
+                  const dayParts = getLocalParts(dayDate, appSettings.timezone);
+                  const dateStr = `${dayParts.year}-${pad(dayParts.month)}-${pad(dayParts.day)}`;
+                  const isToday = formatIanaDateStr(new Date(), appSettings.timezone, 'YYYY-MM-DD') === dateStr;
 
                   const dayEntries = entries.filter((e) => {
-                    return formatToKolkataDateStr(e.scheduledAt) === dateStr;
+                    return formatIanaDateStr(e.scheduledAt, appSettings.timezone, 'YYYY-MM-DD') === dateStr;
                   });
 
                   return (
@@ -751,10 +826,10 @@ export default function ContentCalendarPage() {
                       {/* Week Column Header */}
                       <div className={`p-2.5 text-center border-b border-devpilot-border ${isToday ? 'bg-devpilot-purple/10' : 'bg-black/30'}`}>
                         <div className="text-[10px] font-semibold text-devpilot-muted uppercase">
-                          {new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, weekday: 'short' }).format(dayDate)}
+                          {dayParts.weekdayShort}
                         </div>
                         <div className={`text-sm font-bold mt-0.5 ${isToday ? 'text-devpilot-purple' : 'text-devpilot-text'}`}>
-                          {new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, day: 'numeric' }).format(dayDate)}
+                          {dayParts.day}
                         </div>
                       </div>
 
@@ -774,7 +849,7 @@ export default function ContentCalendarPage() {
                               <div className="flex items-center justify-between text-[10px] text-devpilot-cyan font-mono">
                                 <span className="flex items-center gap-1">
                                   <Clock className="w-3 h-3" />
-                                  {new Intl.DateTimeFormat('en-IN', { timeZone: APP_TIMEZONE, hour: '2-digit', minute: '2-digit' }).format(new Date(entry.scheduledAt))}
+                                  {formatIanaTimeStr(entry.scheduledAt, appSettings.timezone, appSettings.timeFormat)}
                                 </span>
                                 <Badge variant="cyan" className="text-[9px] px-1 py-0">
                                   {formatContentType(entry.post.contentType)}
@@ -811,7 +886,7 @@ export default function ContentCalendarPage() {
               <div className="flex items-center justify-between pb-4 border-b border-devpilot-border">
                 <div>
                   <h3 className="text-base font-bold text-devpilot-text">
-                    Daily Schedule: {new Intl.DateTimeFormat('en-US', { timeZone: APP_TIMEZONE, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(currentDate)}
+                    Daily Schedule: {new Intl.DateTimeFormat('en-US', { timeZone: appSettings.timezone, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(currentDate)}
                   </h3>
                   <p className="text-xs text-devpilot-muted mt-0.5">
                     {entries.length} publishing slot(s) scheduled for this date
@@ -839,7 +914,7 @@ export default function ContentCalendarPage() {
                         <div className="flex items-center justify-between">
                           <span className="flex items-center gap-1.5 text-xs text-devpilot-cyan font-mono font-medium">
                             <Clock className="w-3.5 h-3.5" />
-                            {new Intl.DateTimeFormat('en-IN', { timeZone: APP_TIMEZONE, hour: '2-digit', minute: '2-digit' }).format(new Date(entry.scheduledAt))}
+                            {formatIanaTimeStr(entry.scheduledAt, appSettings.timezone, appSettings.timeFormat)}
                           </span>
                           <Badge variant="purple" className="text-[10px]">
                             {formatContentType(entry.post.contentType)}
@@ -957,7 +1032,7 @@ export default function ContentCalendarPage() {
                         <div className="flex items-center gap-3 text-[11px] text-devpilot-subtle pt-0.5">
                           <span className="flex items-center gap-1 text-devpilot-cyan font-mono">
                             <Clock className="w-3 h-3" />
-                            {new Date(entry.scheduledAt).toLocaleString()}
+                            {formatIanaDateStr(entry.scheduledAt, appSettings.timezone, appSettings.dateFormat)} at {formatIanaTimeStr(entry.scheduledAt, appSettings.timezone, appSettings.timeFormat)}
                           </span>
                           <span>•</span>
                           <span>Author: {entry.post.createdBy?.name || 'Owner'}</span>
@@ -1069,7 +1144,7 @@ export default function ContentCalendarPage() {
               {/* Date & Time Picker */}
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-devpilot-text">
-                  Scheduled Date & Time (UTC+05:30)
+                  Scheduled Date & Time ({getTimezoneLabel(appSettings.timezone)})
                 </label>
                 <Input
                   type="datetime-local"
@@ -1079,7 +1154,7 @@ export default function ContentCalendarPage() {
                   required
                 />
                 <p className="text-[11px] text-devpilot-subtle">
-                  Time will be converted to UTC for database storage and synchronized in Asia/Kolkata timezone.
+                  Time will be converted to UTC for database storage and synchronized in {appSettings.timezone} timezone.
                 </p>
               </div>
 
@@ -1141,7 +1216,7 @@ export default function ContentCalendarPage() {
             <form onSubmit={handleRescheduleSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-devpilot-text">
-                  New Scheduled Date & Time
+                  New Scheduled Date & Time ({getTimezoneLabel(appSettings.timezone)})
                 </label>
                 <Input
                   type="datetime-local"
@@ -1254,7 +1329,7 @@ export default function ContentCalendarPage() {
               <div className="flex items-center gap-2 text-xs text-devpilot-cyan">
                 <Clock className="w-4 h-4" />
                 <span className="font-mono font-medium">
-                  {new Date(viewingEntry.scheduledAt).toLocaleString()}
+                  {formatIanaDateStr(viewingEntry.scheduledAt, appSettings.timezone, appSettings.dateFormat)} at {formatIanaTimeStr(viewingEntry.scheduledAt, appSettings.timezone, appSettings.timeFormat)}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
@@ -1312,7 +1387,7 @@ export default function ContentCalendarPage() {
             <div className="space-y-1 pt-3 border-t border-devpilot-border text-xs text-devpilot-subtle">
               <div className="flex items-center justify-between">
                 <span>Author: {viewingEntry.post.createdBy?.name || 'Owner'}</span>
-                <span>Created: {new Intl.DateTimeFormat('en-IN', { timeZone: APP_TIMEZONE, dateStyle: 'medium' }).format(new Date(viewingEntry.createdAt))}</span>
+                <span>Created: {formatIanaDateStr(viewingEntry.createdAt, appSettings.timezone, appSettings.dateFormat)}</span>
               </div>
               {viewingEntry.post.approval && (
                 <div className="flex items-center justify-between text-emerald-400">

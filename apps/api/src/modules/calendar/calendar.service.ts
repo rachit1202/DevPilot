@@ -1,28 +1,44 @@
 import { prisma } from '../../db/prisma';
 import { ActivityService } from '../activity/activity.service';
+import { SettingsService } from '../settings/settings.service';
 import { CalendarQueryInput, SchedulePostInput, ReschedulePostInput } from '@devpilot/validation';
 import { PostStatus, ApprovalStatus, UserRole, Prisma } from '@prisma/client';
 import { AuthUser } from '../../types/fastify';
 import { config } from '../../config/env';
+import { ianaLocalToUtc } from '@devpilot/shared';
 
 export class CalendarService {
   /**
    * Retrieves calendar entries for a date range with optional filtering by status and contentType.
+   * Concurrently uses the dynamically configured ApplicationSettings timezone and preferences.
    */
   static async listCalendarEntries(query: CalendarQueryInput) {
-    let startDate = new Date(query.startDate);
-    let endDate = new Date(query.endDate);
+    const appSettings = await SettingsService.getApplicationSettings();
+    const effectiveTimezone = appSettings.timezone || config.APP_TIMEZONE || 'Asia/Kolkata';
+
+    let startDate: Date;
+    let endDate: Date;
+
+    // Handle date-only input (YYYY-MM-DD) converted accurately in the effective timezone
+    if (query.startDate.length === 10) {
+      const [y, m, d] = query.startDate.split('-').map(Number);
+      startDate = ianaLocalToUtc(y, m, d, 0, 0, 0, effectiveTimezone);
+    } else {
+      startDate = new Date(query.startDate);
+    }
+
+    if (query.endDate.length === 10) {
+      const [y, m, d] = query.endDate.split('-').map(Number);
+      endDate = new Date(ianaLocalToUtc(y, m, d, 23, 59, 59, effectiveTimezone).getTime() + 999);
+    } else {
+      endDate = new Date(query.endDate);
+    }
 
     if (isNaN(startDate.getTime())) {
       throw new Error('INVALID_DATE: Invalid startDate parameter.');
     }
     if (isNaN(endDate.getTime())) {
       throw new Error('INVALID_DATE: Invalid endDate parameter.');
-    }
-
-    // If endDate was supplied as a date-only string (e.g. 2026-11-30), extend to end of day UTC
-    if (query.endDate.length === 10) {
-      endDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000 - 1);
     }
 
     const where: Prisma.ContentScheduleWhereInput = {
@@ -72,7 +88,11 @@ export class CalendarService {
     });
 
     return {
-      timezone: config.APP_TIMEZONE,
+      timezone: effectiveTimezone,
+      timeFormat: appSettings.timeFormat,
+      dateFormat: appSettings.dateFormat,
+      firstDayOfWeek: appSettings.firstDayOfWeek,
+      defaultView: appSettings.defaultView,
       range: {
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
@@ -196,6 +216,7 @@ export class CalendarService {
         });
 
         // 3. Log audit activity
+        const appSettings = await SettingsService.getApplicationSettings();
         await ActivityService.log({
           tx,
           userId: user.id,
@@ -206,7 +227,7 @@ export class CalendarService {
             contentPostId: post.id,
             title: post.title,
             scheduledAt: schedule.scheduledAt.toISOString(),
-            timezone: config.APP_TIMEZONE,
+            timezone: appSettings.timezone,
           },
         });
 
@@ -279,6 +300,7 @@ export class CalendarService {
         },
       });
 
+      const appSettings = await SettingsService.getApplicationSettings();
       await ActivityService.log({
         tx,
         userId: user.id,
@@ -290,7 +312,7 @@ export class CalendarService {
           title: schedule.contentPost.title,
           previousDate: schedule.scheduledAt.toISOString(),
           newDate: newScheduledDate.toISOString(),
-          timezone: config.APP_TIMEZONE,
+          timezone: appSettings.timezone,
         },
       });
 

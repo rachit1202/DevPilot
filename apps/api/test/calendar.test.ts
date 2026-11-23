@@ -480,7 +480,7 @@ async function runCalendarTests() {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.data.timezone, 'Asia/Kolkata');
-    assert.ok(body.data.range.startDate.startsWith('2026-11-01'));
+    assert.equal(body.data.range.startDate, '2026-10-31T18:30:00.000Z');
   });
 
   // =========================================================================

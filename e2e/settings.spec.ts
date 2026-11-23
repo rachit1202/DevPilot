@@ -108,5 +108,34 @@ test.describe('DevPilot Brand & Application Settings E2E Suite', () => {
     await page.getByRole('button', { name: /Save Settings/i }).click();
     await expect(page.getByText('Application settings saved successfully.')).toBeVisible();
   });
+
+  test('4. Dynamic Timezone & Calendar Sync: Updating timezone updates calendar indicator and boundary view', async ({ page }) => {
+    // 1. Authenticate
+    await loginAsOwner(page);
+
+    // 2. Navigate to /settings/app
+    await page.goto('/settings/app');
+    await expect(page).toHaveURL('http://localhost:3000/settings/app');
+
+    // 3. Switch timezone to UTC
+    const select = page.locator('select').first();
+    await select.selectOption('UTC');
+    await page.getByRole('button', { name: /Save Settings/i }).click();
+    await expect(page.getByText('Application settings saved successfully.')).toBeVisible();
+
+    // 4. Navigate to /calendar and verify dynamic UTC indicator
+    await page.goto('/calendar');
+    await expect(page.getByText('UTC (UTC+00:00)')).toBeVisible();
+
+    // 5. Restore back to Asia/Kolkata
+    await page.goto('/settings/app');
+    await page.locator('select').first().selectOption('Asia/Kolkata');
+    await page.getByRole('button', { name: /Save Settings/i }).click();
+    await expect(page.getByText('Application settings saved successfully.')).toBeVisible();
+
+    // 6. Verify calendar displays Asia/Kolkata again
+    await page.goto('/calendar');
+    await expect(page.getByText('Asia/Kolkata (UTC+05:30)')).toBeVisible();
+  });
 });
 

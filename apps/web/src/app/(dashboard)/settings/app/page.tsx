@@ -370,21 +370,24 @@ export default function ApplicationSettingsPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-devpilot-muted mb-1.5">
-                Default Content Language
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-medium text-devpilot-muted">
+                  Default Content Language
+                </label>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-devpilot-subtle border border-devpilot-border">
+                  Deferred Localization
+                </span>
+              </div>
               <select
                 value={formData.defaultLanguage}
-                onChange={(e) => handleChange('defaultLanguage', e.target.value)}
-                disabled={!isOwnerOrAdmin || isSaving}
-                className="w-full text-xs rounded-lg bg-devpilot-bg/60 border border-devpilot-border px-3 py-2 text-devpilot-text focus:outline-none focus:border-devpilot-purple"
+                disabled={true}
+                className="w-full text-xs rounded-lg bg-devpilot-bg/30 border border-devpilot-border px-3 py-2 text-devpilot-muted cursor-not-allowed"
               >
-                {LANGUAGES.map((lang) => (
-                  <option key={lang.value} value={lang.value} className="bg-devpilot-card text-devpilot-text">
-                    {lang.label}
-                  </option>
-                ))}
+                <option value="en">English (United States) [en]</option>
               </select>
+              <p className="text-[11px] text-devpilot-subtle mt-1.5 leading-relaxed">
+                DevPilot currently operates in English (en). Multi-language localization and translation engines are planned for a future milestone. Stored preference is preserved.
+              </p>
             </div>
           </CardContent>
         </Card>
