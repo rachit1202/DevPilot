@@ -547,7 +547,7 @@ async function runCalendarTests() {
         delayFirstTx = false;
         return origTransaction(async (tx: any) => {
           const res = await fn(tx);
-          await new Promise((r) => setTimeout(r, 100)); // hold transaction lock to guarantee race overlap
+          await new Promise((r) => setTimeout(r, 300)); // hold transaction lock to guarantee race overlap
           return res;
         }, options);
       }

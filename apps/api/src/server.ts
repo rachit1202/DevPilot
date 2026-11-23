@@ -14,6 +14,7 @@ import { authRoutes } from './modules/auth/auth.routes';
 import { contentRoutes } from './modules/content/content.routes';
 import { mediaRoutes } from './modules/media/media.routes';
 import { calendarRoutes } from './modules/calendar/calendar.routes';
+import { settingsRoutes } from './modules/settings/settings.routes';
 
 export function buildServer(): FastifyInstance {
   const server = fastify({
@@ -108,6 +109,7 @@ export function buildServer(): FastifyInstance {
       v1.register(contentRoutes, { prefix: '/content' });
       v1.register(mediaRoutes, { prefix: '/media' });
       v1.register(calendarRoutes, { prefix: '/calendar' });
+      v1.register(settingsRoutes, { prefix: '/settings' });
     },
     { prefix: '/api/v1' }
   );

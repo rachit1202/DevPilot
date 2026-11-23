@@ -13,15 +13,31 @@ export interface BrandSettings {
   id: string;
   brandName: string;
   tagline: string;
+  description?: string | null;
   logoUrl?: string | null;
   websiteUrl?: string | null;
   primaryColor: string;
   secondaryColor: string;
   tone: string;
   audience: string;
+  industry?: string | null;
+  primaryLanguage?: string | null;
+  guidelines?: string | null;
   topics: string[];
   avoidTopics: string[];
   ctaDefaults?: string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface ApplicationSettings {
+  id: string;
+  timezone: string;
+  defaultLanguage: string;
+  timeFormat: string;
+  dateFormat: string;
+  firstDayOfWeek: number;
+  defaultView: string;
   createdAt: Date | string;
   updatedAt: Date | string;
 }

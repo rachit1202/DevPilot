@@ -12,7 +12,8 @@
     "test:content-media": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/content-media.test.ts",
     "test:hardening": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/workflow-hardening.test.ts",
     "test:calendar": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/calendar.test.ts",
-    "test:all": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/auth.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/content-media.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/workflow-hardening.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/calendar.test.ts",
+    "test:settings": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/settings.test.ts",
+    "test:all": "node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/auth.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/content-media.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/workflow-hardening.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/calendar.test.ts && node --env-file=../../.env ../../node_modules/ts-node/dist/bin.js --transpile-only test/settings.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

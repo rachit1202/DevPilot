@@ -19,6 +19,7 @@ import {
   Sliders,
   Globe2,
   ScrollText,
+  Settings,
 } from 'lucide-react';
 
 export const navigationItems = [
@@ -35,6 +36,7 @@ export const navigationItems = [
 
 export const settingsItems = [
   { name: 'Brand Settings', href: '/settings/brand', icon: Palette },
+  { name: 'Application Settings', href: '/settings/app', icon: Settings },
   { name: 'AI Agent Settings', href: '/settings/agent', icon: Bot, phase: 'Phase 2' },
   { name: 'Content Preferences', href: '/settings/preferences', icon: Sliders },
   { name: 'Platform Settings', href: '/settings/platforms', icon: Globe2 },

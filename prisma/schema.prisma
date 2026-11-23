@@ -87,12 +87,16 @@ model BrandSettings {
   id              String         @id @default(uuid()) @db.Uuid
   brandName       String         @default("CodeCulture") @map("brand_name")
   tagline         String         @default("Code. Create. Build. Repeat.")
+  description     String?        @db.Text
   logoUrl         String?        @map("logo_url")
   websiteUrl      String?        @map("website_url")
   primaryColor    String         @default("#8B5CF6") @map("primary_color")
   secondaryColor  String         @default("#06B6D4") @map("secondary_color")
   tone            String         @default("Informative, modern, developer-friendly, humorous")
   audience        String         @default("Web developers, students, freelancers, AI enthusiasts")
+  industry        String?        @default("Developer Education & Tech Media")
+  primaryLanguage String         @default("en") @map("primary_language")
+  guidelines      String?        @db.Text
   topics          String[]       @default(["Programming", "Web Dev", "AI", "Memes", "Tech Trends"])
   avoidTopics     String[]       @default([]) @map("avoid_topics")
   ctaDefaults     String?        @map("cta_defaults")
@@ -102,6 +106,20 @@ model BrandSettings {
   posts           ContentPost[]
 
   @@map("brand_settings")
+}
+
+model ApplicationSettings {
+  id              String         @id @default(uuid()) @db.Uuid
+  timezone        String         @default("Asia/Kolkata")
+  defaultLanguage String         @default("en") @map("default_language")
+  timeFormat      String         @default("12h") @map("time_format")
+  dateFormat      String         @default("YYYY-MM-DD") @map("date_format")
+  firstDayOfWeek  Int            @default(0) @map("first_day_of_week")
+  defaultView     String         @default("month") @map("default_view")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@map("application_settings")
 }
 
 model ContentPost {
