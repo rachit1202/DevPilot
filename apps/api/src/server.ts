@@ -76,7 +76,7 @@ export function buildServer(): FastifyInstance {
 
   // 5. Global Rate Limiter
   server.register(rateLimit, {
-    max: 120,
+    max: config.RATE_LIMIT_MAX,
     timeWindow: '1 minute',
   });
 

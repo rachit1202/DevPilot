@@ -554,7 +554,12 @@ export class ContentService {
     if (existing.status === PostStatus.IN_REVIEW) {
       throw new Error('INVALID_POST_STATE: Post is already submitted for review.');
     }
-    if (existing.status === PostStatus.APPROVED || existing.status === PostStatus.SCHEDULED || existing.status === PostStatus.PUBLISHED) {
+    if (
+      existing.status === PostStatus.APPROVED ||
+      existing.status === PostStatus.SCHEDULED ||
+      existing.status === PostStatus.PUBLISHED ||
+      existing.status === PostStatus.ARCHIVED
+    ) {
       throw new Error(`INVALID_POST_STATE: Cannot submit a post with status ${existing.status} for review.`);
     }
 
@@ -646,5 +651,134 @@ export class ContentService {
     });
 
     return { success: true, message: 'Content post deleted successfully' };
+  }
+
+  /**
+   * Archives a content post.
+   * Can be performed by Owners, Admins, or post creators.
+   * Safely cancels any active schedule and retains media links and approval history.
+   */
+  static async archiveContent(id: string, user: AuthUser) {
+    if (user.role === UserRole.ANALYST) {
+      throw new Error('FORBIDDEN: Analysts have read-only access and cannot archive content.');
+    }
+
+    const existing = await prisma.contentPost.findUnique({
+      where: { id },
+      select: { id: true, title: true, status: true, createdById: true },
+    });
+
+    if (!existing) {
+      throw new Error('NOT_FOUND: Content post not found.');
+    }
+
+    const isOwnerOrAdmin = user.role === UserRole.OWNER || user.role === UserRole.ADMIN;
+    if (!isOwnerOrAdmin && existing.createdById !== user.id && user.role !== UserRole.APPROVER) {
+      throw new Error('FORBIDDEN: You do not have permission to archive content created by another user.');
+    }
+
+    if (existing.status === PostStatus.ARCHIVED) {
+      throw new Error('INVALID_POST_STATE: Content post is already archived.');
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      // 1. Cancel active schedules if any
+      await tx.contentSchedule.updateMany({
+        where: { contentPostId: id, status: 'SCHEDULED' },
+        data: { status: 'CANCELLED' },
+      });
+
+      // 2. Update status to ARCHIVED and remove scheduledAt instant
+      const updated = await tx.contentPost.update({
+        where: { id },
+        data: {
+          status: PostStatus.ARCHIVED,
+          scheduledAt: null,
+        },
+        include: {
+          mediaItems: {
+            include: { mediaAsset: true },
+            orderBy: { position: 'asc' },
+          },
+          createdBy: {
+            select: { id: true, name: true, email: true, role: true },
+          },
+        },
+      });
+
+      // 3. Log activity
+      await ActivityService.log({
+        tx,
+        userId: user.id,
+        action: 'CONTENT_ARCHIVED',
+        entityType: 'CONTENT_POST',
+        entityId: id,
+        metadata: {
+          title: existing.title,
+          previousStatus: existing.status,
+          archivedById: user.id,
+        },
+      });
+
+      return updated;
+    });
+  }
+
+  /**
+   * Restores an archived content post back to DRAFT status.
+   */
+  static async restoreContent(id: string, user: AuthUser) {
+    if (user.role === UserRole.ANALYST) {
+      throw new Error('FORBIDDEN: Analysts have read-only access and cannot restore content.');
+    }
+
+    const existing = await prisma.contentPost.findUnique({
+      where: { id },
+      select: { id: true, title: true, status: true, createdById: true },
+    });
+
+    if (!existing) {
+      throw new Error('NOT_FOUND: Content post not found.');
+    }
+
+    const isOwnerOrAdmin = user.role === UserRole.OWNER || user.role === UserRole.ADMIN;
+    if (!isOwnerOrAdmin && existing.createdById !== user.id && user.role !== UserRole.APPROVER) {
+      throw new Error('FORBIDDEN: You do not have permission to restore content created by another user.');
+    }
+
+    if (existing.status !== PostStatus.ARCHIVED) {
+      throw new Error(`INVALID_POST_STATE: Post with status ${existing.status} is not archived.`);
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      const updated = await tx.contentPost.update({
+        where: { id },
+        data: { status: PostStatus.DRAFT },
+        include: {
+          mediaItems: {
+            include: { mediaAsset: true },
+            orderBy: { position: 'asc' },
+          },
+          createdBy: {
+            select: { id: true, name: true, email: true, role: true },
+          },
+        },
+      });
+
+      await ActivityService.log({
+        tx,
+        userId: user.id,
+        action: 'CONTENT_RESTORED',
+        entityType: 'CONTENT_POST',
+        entityId: id,
+        metadata: {
+          title: existing.title,
+          newStatus: PostStatus.DRAFT,
+          restoredById: user.id,
+        },
+      });
+
+      return updated;
+    });
   }
 }

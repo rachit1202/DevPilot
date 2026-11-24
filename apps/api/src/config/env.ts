@@ -11,6 +11,7 @@ const envSchema = z.object({
   UPLOAD_DIR: z.string().default('./storage/uploads'),
   APP_TIMEZONE: z.string().default('Asia/Kolkata'),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().default(10),
+  RATE_LIMIT_MAX: z.coerce.number().default(120),
 });
 
 const parsed = envSchema.safeParse(process.env);

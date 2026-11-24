@@ -258,4 +258,82 @@ export class ContentController {
       throw err;
     }
   }
+
+  static async archive(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const user = request.user as AuthUser;
+
+    try {
+      const post = await ContentService.archiveContent(id, user);
+
+      return reply.status(200).send({
+        success: true,
+        message: 'Content post archived successfully',
+        data: { post },
+      });
+    } catch (err: unknown) {
+      const error = err as Error;
+      if (error.message.startsWith('FORBIDDEN')) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Forbidden',
+          message: error.message.replace(/^[A-Z_]+:\s*/, ''),
+        });
+      }
+      if (error.message.startsWith('NOT_FOUND')) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Not Found',
+          message: error.message.replace(/^[A-Z_]+:\s*/, ''),
+        });
+      }
+      if (error.message.startsWith('INVALID_POST_STATE')) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Bad Request',
+          message: error.message.replace(/^[A-Z_]+:\s*/, ''),
+        });
+      }
+      throw err;
+    }
+  }
+
+  static async restore(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const user = request.user as AuthUser;
+
+    try {
+      const post = await ContentService.restoreContent(id, user);
+
+      return reply.status(200).send({
+        success: true,
+        message: 'Content post restored to draft successfully',
+        data: { post },
+      });
+    } catch (err: unknown) {
+      const error = err as Error;
+      if (error.message.startsWith('FORBIDDEN')) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Forbidden',
+          message: error.message.replace(/^[A-Z_]+:\s*/, ''),
+        });
+      }
+      if (error.message.startsWith('NOT_FOUND')) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Not Found',
+          message: error.message.replace(/^[A-Z_]+:\s*/, ''),
+        });
+      }
+      if (error.message.startsWith('INVALID_POST_STATE')) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Bad Request',
+          message: error.message.replace(/^[A-Z_]+:\s*/, ''),
+        });
+      }
+      throw err;
+    }
+  }
 }

@@ -433,11 +433,151 @@ async function runContentMediaTests() {
     assert.equal(getRes.statusCode, 404);
   });
 
-  // 21. Activity Logging Verification
-  await test('21. Activity logs confirm database records for CONTENT_CREATED, CONTENT_UPDATED, CONTENT_DELETED, MEDIA_UPLOADED, MEDIA_DELETED', async () => {
+  // 21. Archive and Restore Lifecycle Tests
+  await test('21. Content Archive & Restore: Post is archived, cancels active schedules, and restores to DRAFT', async () => {
+    // 1. Create a post
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/v1/content',
+      headers: { cookie: authCookie, origin: frontendOrigin },
+      payload: {
+        title: 'M1.8.1 Post For Archiving',
+        caption: 'Testing archive and restore lifecycle #archive',
+        contentType: ContentType.TIPS,
+        category: ContentCategory.TECH_NEWS,
+      },
+    });
+    assert.equal(createRes.statusCode, 201);
+    const post = JSON.parse(createRes.body).data.post;
+
+    // Approve post first so it can be scheduled
+    const apprRes = await server.inject({
+      method: 'POST',
+      url: `/api/v1/content/${post.id}/approve`,
+      headers: { cookie: authCookie, origin: frontendOrigin },
+    });
+    assert.equal(apprRes.statusCode, 200);
+
+    // 2. Schedule the post
+    const schedDate = new Date(Date.now() + 86400000 * 5); // 5 days in future
+    const schedRes = await server.inject({
+      method: 'POST',
+      url: '/api/v1/calendar/schedule',
+      headers: { cookie: authCookie, origin: frontendOrigin },
+      payload: {
+        contentPostId: post.id,
+        scheduledAt: schedDate.toISOString(),
+      },
+    });
+    assert.equal(schedRes.statusCode, 201);
+
+    // 3. Archive the post
+    const archiveRes = await server.inject({
+      method: 'POST',
+      url: `/api/v1/content/${post.id}/archive`,
+      headers: { cookie: authCookie, origin: frontendOrigin },
+    });
+    assert.equal(archiveRes.statusCode, 200);
+    const archived = JSON.parse(archiveRes.body).data.post;
+    assert.equal(archived.status, PostStatus.ARCHIVED);
+    assert.equal(archived.scheduledAt, null);
+
+    // 4. Verify schedule was cancelled
+    const schedule = await prisma.contentSchedule.findFirst({
+      where: { contentPostId: post.id },
+    });
+    assert.ok(schedule);
+    assert.equal(schedule.status, 'CANCELLED');
+
+    // 5. Verify cannot submit archived post for review
+    const submitRes = await server.inject({
+      method: 'POST',
+      url: `/api/v1/content/${post.id}/submit-review`,
+      headers: { cookie: authCookie, origin: frontendOrigin },
+    });
+    assert.equal(submitRes.statusCode, 400);
+
+    // 6. Restore the post
+    const restoreRes = await server.inject({
+      method: 'POST',
+      url: `/api/v1/content/${post.id}/restore`,
+      headers: { cookie: authCookie, origin: frontendOrigin },
+    });
+    assert.equal(restoreRes.statusCode, 200);
+    const restored = JSON.parse(restoreRes.body).data.post;
+    assert.equal(restored.status, PostStatus.DRAFT);
+
+    // Cleanup
+    await server.inject({
+      method: 'DELETE',
+      url: `/api/v1/content/${post.id}`,
+      headers: { cookie: authCookie, origin: frontendOrigin },
+    });
+  });
+
+  // 22. Content Duplication Verification
+  await test('22. Content Duplication: Duplicate creates independent post with new ID, DRAFT status, and clean history', async () => {
+    // 1. Create original post
+    const createRes = await server.inject({
+      method: 'POST',
+      url: '/api/v1/content',
+      headers: { cookie: authCookie, origin: frontendOrigin },
+      payload: {
+        title: 'Original Post To Duplicate',
+        caption: 'Testing duplicate post prefill and independence #original',
+        contentType: ContentType.TIPS,
+        category: ContentCategory.TECH_NEWS,
+        hashtags: ['#original', '#codeculture'],
+      },
+    });
+    assert.equal(createRes.statusCode, 201);
+    const original = JSON.parse(createRes.body).data.post;
+
+    // 2. Duplicate via standard creation API using original post data
+    const duplicateRes = await server.inject({
+      method: 'POST',
+      url: '/api/v1/content',
+      headers: { cookie: authCookie, origin: frontendOrigin },
+      payload: {
+        title: `${original.title} (Copy)`,
+        caption: original.caption,
+        contentType: original.contentType,
+        category: original.category,
+        hashtags: original.hashtags,
+        mediaAssetIds: [],
+      },
+    });
+    assert.equal(duplicateRes.statusCode, 201);
+    const duplicate = JSON.parse(duplicateRes.body).data.post;
+
+    assert.notEqual(duplicate.id, original.id, 'Duplicate must receive a new unique ID');
+    assert.equal(duplicate.status, PostStatus.DRAFT, 'Duplicate must default to DRAFT');
+    assert.equal(duplicate.title, 'Original Post To Duplicate (Copy)');
+
+    // Verify duplicate has no approval records
+    const approvals = await prisma.approval.findMany({
+      where: { contentPostId: duplicate.id },
+    });
+    assert.equal(approvals.length, 0, 'Duplicate must have clean approval history');
+
+    // Cleanup
+    await server.inject({
+      method: 'DELETE',
+      url: `/api/v1/content/${original.id}`,
+      headers: { cookie: authCookie, origin: frontendOrigin },
+    });
+    await server.inject({
+      method: 'DELETE',
+      url: `/api/v1/content/${duplicate.id}`,
+      headers: { cookie: authCookie, origin: frontendOrigin },
+    });
+  });
+
+  // 23. Activity Logging Verification
+  await test('23. Activity logs confirm database records for CONTENT_CREATED, CONTENT_UPDATED, CONTENT_DELETED, MEDIA_UPLOADED, MEDIA_DELETED, CONTENT_ARCHIVED', async () => {
     const logs = await prisma.activityLog.findMany({
       orderBy: { createdAt: 'desc' },
-      take: 20,
+      take: 30,
     });
 
     const actions = logs.map((l) => l.action);
@@ -446,6 +586,8 @@ async function runContentMediaTests() {
     assert.ok(actions.includes('CONTENT_DELETED'), 'Should log CONTENT_DELETED');
     assert.ok(actions.includes('MEDIA_UPLOADED'), 'Should log MEDIA_UPLOADED');
     assert.ok(actions.includes('MEDIA_DELETED'), 'Should log MEDIA_DELETED');
+    assert.ok(actions.includes('CONTENT_ARCHIVED'), 'Should log CONTENT_ARCHIVED');
+    assert.ok(actions.includes('CONTENT_RESTORED'), 'Should log CONTENT_RESTORED');
   });
 
   await server.close();

@@ -68,6 +68,24 @@ export async function contentRoutes(server: FastifyInstance) {
     ContentController.submitReview
   );
 
+  // POST /content/:id/archive (protected, archive content)
+  server.post(
+    '/:id/archive',
+    {
+      preHandler: [authGuard],
+    },
+    ContentController.archive
+  );
+
+  // POST /content/:id/restore (protected, restore archived content to draft)
+  server.post(
+    '/:id/restore',
+    {
+      preHandler: [authGuard],
+    },
+    ContentController.restore
+  );
+
   // DELETE /content/:id (protected, ownership enforced)
   server.delete(
     '/:id',

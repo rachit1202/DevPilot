@@ -50,6 +50,7 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       env: {
         AUTH_RATE_LIMIT_MAX: '100',
+        RATE_LIMIT_MAX: '500',
       },
       stdout: 'pipe',
       stderr: 'pipe',

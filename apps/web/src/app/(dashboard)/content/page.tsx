@@ -27,6 +27,9 @@ import {
   User,
   ChevronLeft,
   ChevronRight,
+  Copy,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react';
 
 interface ContentPost {
@@ -88,8 +91,10 @@ export default function ContentLibraryPage() {
   const [editingPost, setEditingPost] = useState<ContentPost | null>(null);
   const [viewingPost, setViewingPost] = useState<ContentPost | null>(null);
   const [postToDelete, setPostToDelete] = useState<ContentPost | null>(null);
+  const [postToArchive, setPostToArchive] = useState<ContentPost | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [isDuplicateDraft, setIsDuplicateDraft] = useState(false);
 
   // Form fields
   const [formTitle, setFormTitle] = useState('');
@@ -161,6 +166,7 @@ export default function ContentLibraryPage() {
 
   const openCreateModal = () => {
     setEditingPost(null);
+    setIsDuplicateDraft(false);
     setFormTitle('');
     setFormCaption('');
     setFormHashtags(['#codeculture', '#programming']);
@@ -176,6 +182,7 @@ export default function ContentLibraryPage() {
 
   const openEditModal = (post: ContentPost) => {
     setEditingPost(post);
+    setIsDuplicateDraft(false);
     setFormTitle(post.title);
     setFormCaption(post.caption);
     setFormHashtags(post.hashtags || []);
@@ -183,6 +190,22 @@ export default function ContentLibraryPage() {
     setFormContentType(post.contentType);
     setFormCategory(post.category);
     setFormStatus(post.status);
+    setFormCta(post.cta || '');
+    setSelectedMediaIds(post.mediaItems.map((m) => m.mediaAsset.id));
+    setFormError(null);
+    setShowCreateModal(true);
+  };
+
+  const openDuplicateModal = (post: ContentPost) => {
+    setEditingPost(null);
+    setIsDuplicateDraft(true);
+    setFormTitle(`${post.title} (Copy)`);
+    setFormCaption(post.caption);
+    setFormHashtags(post.hashtags || []);
+    setHashtagInput('');
+    setFormContentType(post.contentType);
+    setFormCategory(post.category);
+    setFormStatus(PostStatus.DRAFT);
     setFormCta(post.cta || '');
     setSelectedMediaIds(post.mediaItems.map((m) => m.mediaAsset.id));
     setFormError(null);
@@ -280,6 +303,42 @@ export default function ContentLibraryPage() {
     } catch (err: unknown) {
       const e = err as Error;
       setError(e.message || 'Failed to delete post');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleArchivePost = async () => {
+    if (!postToArchive) return;
+    setIsSubmitting(true);
+    try {
+      await apiRequest(`/content/${postToArchive.id}/archive`, {
+        method: 'POST',
+      });
+      setSuccessMessage(`Post "${postToArchive.title}" archived successfully.`);
+      setTimeout(() => setSuccessMessage(null), 4000);
+      setPostToArchive(null);
+      await fetchPosts();
+    } catch (err: unknown) {
+      const e = err as Error;
+      setError(e.message || 'Failed to archive post');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRestorePost = async (post: ContentPost) => {
+    setIsSubmitting(true);
+    try {
+      await apiRequest(`/content/${post.id}/restore`, {
+        method: 'POST',
+      });
+      setSuccessMessage(`Post "${post.title}" restored to Draft.`);
+      setTimeout(() => setSuccessMessage(null), 4000);
+      await fetchPosts();
+    } catch (err: unknown) {
+      const e = err as Error;
+      setError(e.message || 'Failed to restore post');
     } finally {
       setIsSubmitting(false);
     }
@@ -495,6 +554,18 @@ export default function ContentLibraryPage() {
                 <Button variant="ghost" size="sm" onClick={() => openEditModal(post)} title="Edit Post">
                   <Edit3 className="w-4 h-4 text-devpilot-muted hover:text-devpilot-purple" />
                 </Button>
+                <Button variant="ghost" size="sm" onClick={() => openDuplicateModal(post)} title="Duplicate Post">
+                  <Copy className="w-4 h-4 text-devpilot-muted hover:text-devpilot-cyan" />
+                </Button>
+                {post.status === PostStatus.ARCHIVED ? (
+                  <Button variant="ghost" size="sm" onClick={() => handleRestorePost(post)} title="Restore Post to Draft">
+                    <ArchiveRestore className="w-4 h-4 text-devpilot-muted hover:text-emerald-400" />
+                  </Button>
+                ) : (
+                  <Button variant="ghost" size="sm" onClick={() => setPostToArchive(post)} title="Archive Post">
+                    <Archive className="w-4 h-4 text-devpilot-muted hover:text-amber-400" />
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" onClick={() => setPostToDelete(post)} title="Delete Post">
                   <Trash2 className="w-4 h-4 text-devpilot-muted hover:text-devpilot-danger" />
                 </Button>
@@ -553,9 +624,11 @@ export default function ContentLibraryPage() {
               </div>
               <div>
                 <h3 className="text-base font-bold text-devpilot-text">
-                  {editingPost ? 'Edit Content Post' : 'Create New CodeCulture Post'}
+                  {editingPost ? 'Edit Content Post' : isDuplicateDraft ? 'Duplicate Content Post (New Draft)' : 'Create New CodeCulture Post'}
                 </h3>
-                <p className="text-xs text-devpilot-muted">Draft content, specify hashtags, and attach media assets</p>
+                <p className="text-xs text-devpilot-muted">
+                  {isDuplicateDraft ? 'Prefilled with original post contents as an unapproved fresh draft.' : 'Draft content, specify hashtags, and attach media assets'}
+                </p>
               </div>
             </div>
 
@@ -946,6 +1019,42 @@ export default function ContentLibraryPage() {
                 className="bg-devpilot-danger hover:bg-devpilot-danger/90 text-white"
               >
                 {isSubmitting ? 'Deleting...' : 'Confirm Delete'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Archive Post Modal */}
+      {postToArchive && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-devpilot-card border border-devpilot-border shadow-2xl p-6 relative">
+            <div className="flex items-center gap-3 mb-3 text-amber-400">
+              <div className="w-10 h-10 rounded-xl bg-amber-400/10 border border-amber-400/20 flex items-center justify-center">
+                <Archive className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-devpilot-text">Archive Content Post</h3>
+                <p className="text-xs text-devpilot-muted">Move post out of active editorial workflows</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-devpilot-muted leading-relaxed mb-4">
+              Are you sure you want to archive <span className="font-semibold text-devpilot-text">&quot;{postToArchive.title}&quot;</span>?
+              If this post has an active schedule, it will be automatically cancelled. The post can be restored back to Draft at any time.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button size="sm" variant="outline" onClick={() => setPostToArchive(null)} disabled={isSubmitting}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleArchivePost}
+                disabled={isSubmitting}
+                className="bg-amber-500 hover:bg-amber-600 text-black font-semibold"
+              >
+                {isSubmitting ? 'Archiving...' : 'Confirm Archive'}
               </Button>
             </div>
           </div>
