@@ -56,7 +56,7 @@ Phase 1 provides a fully functional, self-hosted, and secure administrative comm
 > **Deferred Capabilities (PRD Roadmap Backlog)**:
 > - **MP4 Video Uploads**: Video upload and transcoding deferred to a dedicated media milestone.
 > - **Social Media Integrations**: Live multi-channel publishing and OAuth integrations scheduled for Phase 5.
-> - **AI Content Studio & Ollama**: Concept generation, autonomous drafting, and trend research scheduled for Phase 2 & 3.
+> - **AI Content Studio & Ollama Generation**: Full content ideation, automated drafting, and AI Studio UI scheduled for Milestone 2.2+. (Milestone 2.1 implements the local Ollama provider infrastructure and health/status diagnostics).
 
 ---
 

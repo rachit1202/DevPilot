@@ -12,6 +12,10 @@ const envSchema = z.object({
   APP_TIMEZONE: z.string().default('Asia/Kolkata'),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().default(10),
   RATE_LIMIT_MAX: z.coerce.number().default(120),
+  OLLAMA_BASE_URL: z.string().url().default('http://127.0.0.1:11434'),
+  OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
+  OLLAMA_FALLBACK_MODEL: z.string().default('qwen2.5:1.5b'),
+  OLLAMA_TIMEOUT_MS: z.coerce.number().default(15000),
 });
 
 const parsed = envSchema.safeParse(process.env);

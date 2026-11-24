@@ -17,6 +17,7 @@ import { calendarRoutes } from './modules/calendar/calendar.routes';
 import { settingsRoutes } from './modules/settings/settings.routes';
 import { approvalRoutes } from './modules/approval/approval.routes';
 import { dashboardRoutes } from './modules/dashboard/dashboard.routes';
+import { aiRoutes } from './modules/ai/ai.routes';
 
 export function buildServer(): FastifyInstance {
   const server = fastify({
@@ -114,6 +115,7 @@ export function buildServer(): FastifyInstance {
       v1.register(settingsRoutes, { prefix: '/settings' });
       v1.register(approvalRoutes, { prefix: '/approvals' });
       v1.register(dashboardRoutes, { prefix: '/dashboard' });
+      v1.register(aiRoutes, { prefix: '/ai' });
     },
     { prefix: '/api/v1' }
   );
