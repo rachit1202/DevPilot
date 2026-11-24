@@ -59,6 +59,15 @@ export async function contentRoutes(server: FastifyInstance) {
     ContentController.reject
   );
 
+  // POST /content/:id/submit-review (protected, submit post for approval)
+  server.post(
+    '/:id/submit-review',
+    {
+      preHandler: [authGuard],
+    },
+    ContentController.submitReview
+  );
+
   // DELETE /content/:id (protected, ownership enforced)
   server.delete(
     '/:id',

@@ -529,6 +529,68 @@ export class ContentService {
   }
 
   /**
+   * Submits a content post for review, transitioning it to IN_REVIEW.
+   * Can be submitted by post creator, Approver, Admin, or Owner.
+   */
+  static async submitForReview(id: string, user: AuthUser) {
+    if (user.role === UserRole.ANALYST) {
+      throw new Error('FORBIDDEN: Analysts have read-only access.');
+    }
+
+    const existing = await prisma.contentPost.findUnique({
+      where: { id },
+      select: { id: true, title: true, status: true, createdById: true },
+    });
+
+    if (!existing) {
+      throw new Error('NOT_FOUND: Content post not found.');
+    }
+
+    const isOwnerOrAdmin = user.role === UserRole.OWNER || user.role === UserRole.ADMIN;
+    if (!isOwnerOrAdmin && existing.createdById !== user.id && user.role !== UserRole.APPROVER) {
+      throw new Error('FORBIDDEN: You do not have permission to submit content created by another user.');
+    }
+
+    if (existing.status === PostStatus.IN_REVIEW) {
+      throw new Error('INVALID_POST_STATE: Post is already submitted for review.');
+    }
+    if (existing.status === PostStatus.APPROVED || existing.status === PostStatus.SCHEDULED || existing.status === PostStatus.PUBLISHED) {
+      throw new Error(`INVALID_POST_STATE: Cannot submit a post with status ${existing.status} for review.`);
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      const updated = await tx.contentPost.update({
+        where: { id },
+        data: { status: PostStatus.IN_REVIEW },
+        include: {
+          mediaItems: {
+            include: { mediaAsset: true },
+            orderBy: { position: 'asc' },
+          },
+          createdBy: {
+            select: { id: true, name: true, email: true, role: true },
+          },
+        },
+      });
+
+      await ActivityService.log({
+        tx,
+        userId: user.id,
+        action: 'CONTENT_SUBMITTED_FOR_REVIEW',
+        entityType: 'CONTENT_POST',
+        entityId: id,
+        metadata: {
+          title: existing.title,
+          previousStatus: existing.status,
+          submittedById: user.id,
+        },
+      });
+
+      return updated;
+    });
+  }
+
+  /**
    * Deletes a content post and its media links atomically.
    * Enforces role and ownership checks:
    * - Analysts are forbidden.
