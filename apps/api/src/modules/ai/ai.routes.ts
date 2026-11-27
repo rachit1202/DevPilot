@@ -135,6 +135,21 @@ export async function aiRoutes(server: FastifyInstance) {
     AIController.generateCarousel
   );
 
+  // POST /api/v1/ai/generate/reel-script
+  server.post(
+    '/generate/reel-script',
+    {
+      preHandler: [
+        authGuard,
+        roleGuard(UserRole.OWNER, UserRole.ADMIN, UserRole.EDITOR, UserRole.APPROVER),
+      ],
+      config: {
+        rateLimit: aiGenerationRateLimit,
+      },
+    },
+    AIController.generateReelScript
+  );
+
   // POST /api/v1/ai/engine/reset (Privileged - OWNER & ADMIN only)
   server.post(
     '/engine/reset',

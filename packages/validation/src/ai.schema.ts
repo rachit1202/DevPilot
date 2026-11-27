@@ -72,6 +72,32 @@ export const generateCarouselInputSchema = z.object({
   additionalInstructions: z.string().max(500).optional(),
 });
 
+export const reelDurationSchema = z.union([
+  z.literal(30),
+  z.literal(60),
+  z.literal(90),
+]);
+
+export const reelPlatformSchema = z.enum([
+  'INSTAGRAM_REELS',
+  'YOUTUBE_SHORTS',
+  'TIKTOK',
+  'GENERAL',
+]);
+
+export const generateReelScriptInputSchema = z.object({
+  topic: z
+    .string()
+    .min(5, 'Topic must be at least 5 characters.')
+    .max(500, 'Topic must not exceed 500 characters.'),
+  targetAudience: z.string().max(200).optional(),
+  tone: z.string().max(100).optional(),
+  duration: reelDurationSchema.default(60),
+  platform: reelPlatformSchema.default('INSTAGRAM_REELS'),
+  language: z.string().max(50).default('en'),
+  additionalInstructions: z.string().max(500).optional(),
+});
+
 // ==========================================
 // 2. MODEL OUTPUT VALIDATION SCHEMAS
 // ==========================================
@@ -214,6 +240,123 @@ export function createCarouselOutputSchema(expectedSlidesCount?: number) {
 
 export const carouselOutputSchema = createCarouselOutputSchema();
 
+export const reelSceneSchema = z.object({
+  sceneNumber: z.number().int('Scene number must be an integer.').min(1, 'Scene number must be at least 1.'),
+  sceneTitle: z.string().min(2, 'Scene title must be at least 2 characters.').max(100, 'Scene title must not exceed 100 characters.'),
+  visualDirection: z.string().min(5, 'Visual direction must be at least 5 characters.').max(500, 'Visual direction must not exceed 500 characters.'),
+  voiceover: z.string().min(3, 'Voiceover must be at least 3 characters.').max(1000, 'Voiceover must not exceed 1000 characters.'),
+  onScreenText: z.string().max(300, 'On-screen text must not exceed 300 characters.').optional(),
+  durationSeconds: z.number().int('Scene duration must be an integer.').min(2, 'Scene duration must be at least 2 seconds.').max(30, 'Scene duration must not exceed 30 seconds.'),
+});
+
+export const reelScriptOutputBaseSchema = z.object({
+  title: z.string().min(3, 'Reel title must be at least 3 characters.').max(200, 'Reel title must not exceed 200 characters.'),
+  topic: z.string().min(5, 'Topic must be at least 5 characters.').max(500, 'Topic must not exceed 500 characters.'),
+  targetAudience: z.string().max(200, 'Target audience must not exceed 200 characters.').optional(),
+  duration: reelDurationSchema,
+  platform: reelPlatformSchema.optional(),
+  hook: z.string().min(5, 'Opening hook must be at least 5 characters.').max(300, 'Opening hook must not exceed 300 characters.'),
+  scenes: z.array(reelSceneSchema).min(3, 'Reel script must contain at least 3 scenes.').max(15, 'Reel script cannot exceed 15 scenes.'),
+  cta: z.string().min(3, 'Closing CTA must be at least 3 characters.').max(300, 'Closing CTA must not exceed 300 characters.'),
+  suggestedCaption: z.string().max(2000, 'Suggested caption must not exceed 2000 characters.').optional(),
+  suggestedHashtags: z
+    .array(z.string().regex(/^#[a-zA-Z0-9_]+$/, 'Each hashtag must start with # and be alphanumeric.'))
+    .max(15, 'Suggested hashtags cannot exceed 15 items.')
+    .optional(),
+});
+
+export interface CreateReelScriptOutputSchemaOptions {
+  duration?: 30 | 60 | 90;
+  platform?: string;
+  topic?: string;
+}
+
+export function createReelScriptOutputSchema(expectedInput?: CreateReelScriptOutputSchemaOptions | number) {
+  const expectedDuration = typeof expectedInput === 'number' ? expectedInput : expectedInput?.duration;
+  const expectedPlatform = typeof expectedInput === 'object' ? expectedInput?.platform : undefined;
+  const expectedTopic = typeof expectedInput === 'object' ? expectedInput?.topic : undefined;
+
+  return reelScriptOutputBaseSchema.superRefine((data, ctx) => {
+    // 1. Duration validation
+    if (expectedDuration !== undefined && data.duration !== expectedDuration) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Generated script duration (${data.duration}s) does not match requested duration (${expectedDuration}s).`,
+        path: ['duration'],
+      });
+    }
+
+    // 2. Platform validation
+    if (expectedPlatform !== undefined && data.platform !== undefined && data.platform !== expectedPlatform) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Generated script platform (${data.platform}) does not match requested platform (${expectedPlatform}).`,
+        path: ['platform'],
+      });
+    }
+
+    // 3. Topic validation
+    if (expectedTopic !== undefined && data.topic.trim().toLowerCase() !== expectedTopic.trim().toLowerCase()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Generated script topic does not match requested topic.`,
+        path: ['topic'],
+      });
+    }
+
+    // Determine target duration for scene count and collective duration checks
+    const targetDuration = (expectedDuration ?? data.duration) as 30 | 60 | 90;
+
+    // 4. Scene count based on target duration:
+    // 30s: 3–6 scenes
+    // 60s: 5–9 scenes
+    // 90s: 7–13 scenes
+    const bounds: Record<30 | 60 | 90, { min: number; max: number }> = {
+      30: { min: 3, max: 6 },
+      60: { min: 5, max: 9 },
+      90: { min: 7, max: 13 },
+    };
+
+    if (targetDuration in bounds) {
+      const { min, max } = bounds[targetDuration];
+      if (data.scenes.length < min || data.scenes.length > max) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `A ${targetDuration}s Reel must contain between ${min} and ${max} scenes (got ${data.scenes.length}).`,
+          path: ['scenes'],
+        });
+      }
+    }
+
+    // 5. Strict sequential scene numbering starting at 1
+    for (let i = 0; i < data.scenes.length; i++) {
+      const expectedNum = i + 1;
+      if (data.scenes[i].sceneNumber !== expectedNum) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Scene at index ${i} must have sceneNumber ${expectedNum} (got ${data.scenes[i].sceneNumber}).`,
+          path: ['scenes', i, 'sceneNumber'],
+        });
+      }
+    }
+
+    // 6. Collective duration timing window (±15% of target duration)
+    const totalDuration = data.scenes.reduce((sum, s) => sum + s.durationSeconds, 0);
+    const minTolerance = Math.round(targetDuration * 0.85);
+    const maxTolerance = Math.round(targetDuration * 1.15);
+
+    if (totalDuration < minTolerance || totalDuration > maxTolerance) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Total scene duration (${totalDuration}s) must be within ${minTolerance}s–${maxTolerance}s (±15%) for a ${targetDuration}s Reel.`,
+        path: ['scenes'],
+      });
+    }
+  });
+}
+
+export const reelScriptOutputSchema = createReelScriptOutputSchema(60);
+
 // ==========================================
 // 3. ENGINE RESET & STATUS SCHEMAS
 // ==========================================
@@ -241,7 +384,7 @@ export const aiEngineResetInputSchema = z.object({
 export const aiHistoryQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(10),
-  generationType: z.enum(['IDEAS', 'CAPTION', 'HOOKS', 'HASHTAGS', 'CTA', 'REWRITE', 'CAROUSEL']).optional(),
+  generationType: z.enum(['IDEAS', 'CAPTION', 'HOOKS', 'HASHTAGS', 'CTA', 'REWRITE', 'CAROUSEL', 'REEL_SCRIPT']).optional(),
   allUsers: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
   targetUserId: z.string().uuid({ message: 'targetUserId must be a valid UUID' }).optional(),
   startDate: z.string().datetime({ message: 'startDate must be a valid ISO datetime' }).optional(),
@@ -272,6 +415,7 @@ export type GenerateHashtagsInput = z.infer<typeof generateHashtagsInputSchema>;
 export type GenerateCtaInput = z.infer<typeof generateCtaInputSchema>;
 export type GenerateRewriteInput = z.infer<typeof generateRewriteInputSchema>;
 export type GenerateCarouselInput = z.infer<typeof generateCarouselInputSchema>;
+export type GenerateReelScriptInput = z.infer<typeof generateReelScriptInputSchema>;
 
 export type IdeasOutput = z.infer<typeof ideasOutputSchema>;
 export type CaptionOutput = z.infer<typeof captionOutputSchema>;
@@ -281,6 +425,10 @@ export type CtaOutput = z.infer<typeof ctaOutputSchema>;
 export type RewriteOutput = z.infer<typeof rewriteOutputSchema>;
 export type CarouselSlide = z.infer<typeof carouselSlideSchema>;
 export type CarouselOutput = z.infer<typeof carouselOutputSchema>;
+export type ReelDuration = z.infer<typeof reelDurationSchema>;
+export type ReelPlatform = z.infer<typeof reelPlatformSchema>;
+export type ReelScene = z.infer<typeof reelSceneSchema>;
+export type ReelScriptOutput = z.infer<typeof reelScriptOutputBaseSchema>;
 
 export type AIEngineResetInput = z.infer<typeof aiEngineResetInputSchema>;
 export type AIHistoryQueryInput = z.infer<typeof aiHistoryQuerySchema>;

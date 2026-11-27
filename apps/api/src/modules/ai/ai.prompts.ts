@@ -108,3 +108,70 @@ Structure and Output Requirements:
   ]
 }`;
 }
+
+/**
+ * Constructs the structured prompt for generating a scene-by-scene Reel Script.
+ */
+export function buildReelScriptPrompt(input: {
+  topic: string;
+  duration?: 30 | 60 | 90;
+  platform?: string;
+  targetAudience?: string;
+  tone?: string;
+  language?: string;
+  additionalInstructions?: string;
+}): string {
+  const dur = input.duration || 60;
+  const platform = input.platform || 'INSTAGRAM_REELS';
+  const language = input.language || 'en';
+  const sceneGuide = dur === 30 ? '3 to 6' : dur === 60 ? '5 to 9' : '7 to 13';
+
+  return `Task: Generate a high-retention, educational short-form Reel Script for developers with a target duration of ${dur} seconds.
+<user_input>
+Topic: ${input.topic}
+Target Duration: ${dur} seconds
+Platform: ${platform}
+Language: ${language}
+Tone: ${input.tone || 'Informative, modern, developer-friendly'}
+Target Audience: ${input.targetAudience || 'Web developers, students, tech enthusiasts'}
+${input.additionalInstructions ? `Additional Instructions: ${input.additionalInstructions}` : ''}
+</user_input>
+
+Structure and Output Requirements:
+- The script must be divided into ${sceneGuide} sequential scenes.
+- Scene 1 MUST be a 3-to-6 second high-impact Hook addressing a common developer pain point, question, or myth.
+- Intermediate scenes must deliver educational, actionable steps or technical insights with visual direction suggestions.
+- The final scene MUST deliver an action-oriented Outro with a compelling call to action (e.g. Save, Share, Comment, Follow).
+- For EACH scene provide:
+  * sceneNumber: Integer starting strictly at 1 with no missing or duplicate numbers.
+  * sceneTitle: Descriptive label (e.g. "Hook", "Step 1: Setup", "Outro & CTA").
+  * visualDirection: Specific camera framing, screencast steps, visual cues, or code snippet animations.
+  * voiceover: Exact spoken dialogue or narration (~2 to 2.5 words per second pacing guide, accounting for pauses and visual cuts).
+  * onScreenText: Text overlay for users watching with sound muted.
+  * durationSeconds: Integer estimated seconds for this scene (between 2 and 30 seconds).
+- Timing Guide: The sum of durationSeconds across all scenes must closely target ${dur} seconds (within ±15% tolerance: ${Math.round(dur * 0.85)}s to ${Math.round(dur * 1.15)}s). Note: spoken duration is an estimate, not a guaranteed audio timestamp.
+- Provide a matching title, topic, opening hook, closing cta, suggestedCaption, and suggestedHashtags.
+- Respond ONLY with valid JSON. Do not include markdown fences, comments, or explanatory text outside the JSON.
+- Output MUST strictly follow this JSON Schema:
+{
+  "title": "string (Catchy overall reel title, 3-200 chars)",
+  "topic": "${input.topic}",
+  "targetAudience": "${input.targetAudience || 'Web developers'}",
+  "duration": ${dur},
+  "platform": "${platform}",
+  "hook": "string (Opening 3-5 second hook statement)",
+  "scenes": [
+    {
+      "sceneNumber": 1,
+      "sceneTitle": "string",
+      "visualDirection": "string",
+      "voiceover": "string",
+      "onScreenText": "string (optional)",
+      "durationSeconds": 5
+    }
+  ],
+  "cta": "string (Closing call to action statement)",
+  "suggestedCaption": "string (optional suggested feed caption)",
+  "suggestedHashtags": ["#tag1", "#tag2"]
+}`;
+}

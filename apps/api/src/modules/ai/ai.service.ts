@@ -9,6 +9,7 @@ import {
   GenerateCtaInput,
   GenerateRewriteInput,
   GenerateCarouselInput,
+  GenerateReelScriptInput,
   ideasOutputSchema,
   captionOutputSchema,
   hooksOutputSchema,
@@ -16,6 +17,7 @@ import {
   ctaOutputSchema,
   rewriteOutputSchema,
   createCarouselOutputSchema,
+  createReelScriptOutputSchema,
   IdeasOutput,
   CaptionOutput,
   HooksOutput,
@@ -23,6 +25,7 @@ import {
   CtaOutput,
   RewriteOutput,
   CarouselOutput,
+  ReelScriptOutput,
 } from '@devpilot/validation';
 import { OllamaClient } from './providers/ollama.client';
 import { GenerationMutex } from './generation.mutex';
@@ -31,6 +34,7 @@ import {
   ANTI_FABRICATION_SYSTEM_DIRECTIVES,
   detectSuspiciousFabricatedMetrics,
   buildCarouselPrompt,
+  buildReelScriptPrompt,
 } from './ai.prompts';
 
 export class AIService {
@@ -388,6 +392,54 @@ export class AIService {
 
     const historyId = await GenerationPersistenceService.persistHistory({
       generationType: AIGenerationType.CAROUSEL,
+      inputPayload: input as unknown as Record<string, unknown>,
+      outputPayload: gen.data as unknown as Record<string, unknown>,
+      model: gen.model,
+      durationMs: gen.durationMs,
+      userId,
+    });
+
+    return {
+      data: gen.data,
+      durationMs: gen.durationMs,
+      model: gen.model,
+      historyId,
+    };
+  }
+
+  static async generateReelScript(
+    input: GenerateReelScriptInput,
+    userId: string
+  ): Promise<{ data: ReelScriptOutput; durationMs: number; model: string; historyId: string }> {
+    const duration = input.duration || 60;
+    const platform = input.platform || 'INSTAGRAM_REELS';
+    const prompt = buildReelScriptPrompt({
+      topic: input.topic,
+      duration,
+      platform,
+      targetAudience: input.targetAudience,
+      tone: input.tone,
+      language: input.language,
+      additionalInstructions: input.additionalInstructions,
+    });
+
+    const schema = createReelScriptOutputSchema({
+      duration,
+      platform,
+      topic: input.topic,
+    });
+
+    const gen = await this.executeGeneration(
+      'reel-script',
+      prompt,
+      0.6,
+      2048,
+      schema,
+      input.topic
+    );
+
+    const historyId = await GenerationPersistenceService.persistHistory({
+      generationType: AIGenerationType.REEL_SCRIPT,
       inputPayload: input as unknown as Record<string, unknown>,
       outputPayload: gen.data as unknown as Record<string, unknown>,
       model: gen.model,

@@ -74,6 +74,7 @@ enum AIGenerationType {
   CTA
   REWRITE
   CAROUSEL
+  REEL_SCRIPT
 }
 
 model User {

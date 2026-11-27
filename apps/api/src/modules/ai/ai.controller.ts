@@ -7,6 +7,7 @@ import {
   generateCtaInputSchema,
   generateRewriteInputSchema,
   generateCarouselInputSchema,
+  generateReelScriptInputSchema,
   aiEngineResetInputSchema,
   aiHistoryQuerySchema,
   aiHistoryParamsSchema,
@@ -135,6 +136,21 @@ export class AIController {
     const input = generateCarouselInputSchema.parse(request.body);
     const user = (request as any).user as AuthUser;
     const result = await AIService.generateCarousel(input, user.id);
+    return reply.status(200).send({
+      success: true,
+      data: result.data,
+      meta: {
+        historyId: result.historyId,
+        model: result.model,
+        durationMs: result.durationMs,
+      },
+    });
+  }
+
+  static async generateReelScript(request: FastifyRequest, reply: FastifyReply) {
+    const input = generateReelScriptInputSchema.parse(request.body);
+    const user = (request as any).user as AuthUser;
+    const result = await AIService.generateReelScript(input, user.id);
     return reply.status(200).send({
       success: true,
       data: result.data,
