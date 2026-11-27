@@ -15,7 +15,7 @@ import {
   hashtagsOutputSchema,
   ctaOutputSchema,
   rewriteOutputSchema,
-  carouselOutputSchema,
+  createCarouselOutputSchema,
   IdeasOutput,
   CaptionOutput,
   HooksOutput,
@@ -110,7 +110,8 @@ export class AIService {
         schema,
         prompt,
         systemPrompt,
-        rawInputForFabricationCheck
+        rawInputForFabricationCheck,
+        numPredict
       );
 
       // 4. Confirmed normal completion -> remove marker & release mutex
@@ -146,7 +147,8 @@ export class AIService {
     schema: z.ZodSchema<T>,
     originalPrompt: string,
     systemPrompt: string,
-    rawInputText: string
+    rawInputText: string,
+    repairNumPredict = 512
   ): Promise<T> {
     let parsed: any;
     let isValid = false;
@@ -182,7 +184,7 @@ export class AIService {
       prompt: repairPrompt,
       system: systemPrompt,
       temperature: 0.2, // Lower temperature for strict JSON repair
-      numPredict: 512,
+      numPredict: Math.max(repairNumPredict, 512),
     });
 
     try {
@@ -373,12 +375,14 @@ export class AIService {
       additionalInstructions: input.additionalInstructions,
     });
 
+    const schema = createCarouselOutputSchema(slidesCount);
+
     const gen = await this.executeGeneration(
       'carousel',
       prompt,
       0.6,
       1536,
-      carouselOutputSchema,
+      schema,
       input.topic
     );
 

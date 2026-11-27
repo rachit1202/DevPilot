@@ -13,6 +13,7 @@ import bcrypt from 'bcryptjs';
 import {
   generateCarouselInputSchema,
   carouselOutputSchema,
+  createCarouselOutputSchema,
   CarouselOutput,
 } from '@devpilot/validation';
 
@@ -182,6 +183,11 @@ async function runCarouselTests() {
   const approverCookie = await loginAs(approver.email);
   const analystCookie = await loginAs(analyst.email);
 
+  let ipCounter = 1;
+  function getNextIp() {
+    return `127.0.1.${ipCounter++}`;
+  }
+
   // 1. INPUT SCHEMA VALIDATION TESTS
   await test('1. Input schema validates valid payload and defaults slidesCount to 7', async () => {
     const parsed = generateCarouselInputSchema.parse({
@@ -260,6 +266,60 @@ async function runCarouselTests() {
     assert.throws(() => carouselOutputSchema.parse(json));
   });
 
+  // F-01: EXACT SLIDE COUNT VALIDATION TESTS
+  await test('10a. [F-01] createCarouselOutputSchema(5) accepts exactly 5 slides', async () => {
+    const json = JSON.parse(createValidCarouselJson(5));
+    const schema = createCarouselOutputSchema(5);
+    const validated = schema.parse(json);
+    assert.equal(validated.slides.length, 5);
+  });
+
+  await test('10b. [F-01] createCarouselOutputSchema(5) rejects 6 slides with exact count error', async () => {
+    const json = JSON.parse(createValidCarouselJson(6));
+    const schema = createCarouselOutputSchema(5);
+    assert.throws(
+      () => schema.parse(json),
+      (err: any) => err.errors.some((e: any) => e.message.includes('Carousel must contain exactly 5 slides (got 6)'))
+    );
+  });
+
+  // F-02: SLIDE SEQUENCE INTEGRITY TESTS
+  await test('10c. [F-02] Rejects carousel when first slide is not COVER', async () => {
+    const json = JSON.parse(createValidCarouselJson(5));
+    json.slides[0].slideType = 'BODY';
+    assert.throws(
+      () => carouselOutputSchema.parse(json),
+      (err: any) => err.errors.some((e: any) => e.message.includes('First slide must have slideType "COVER"'))
+    );
+  });
+
+  await test('10d. [F-02] Rejects carousel when last slide is not CTA', async () => {
+    const json = JSON.parse(createValidCarouselJson(5));
+    json.slides[4].slideType = 'BODY';
+    assert.throws(
+      () => carouselOutputSchema.parse(json),
+      (err: any) => err.errors.some((e: any) => e.message.includes('Last slide must have slideType "CTA"'))
+    );
+  });
+
+  await test('10e. [F-02] Rejects carousel when intermediate slide is not BODY', async () => {
+    const json = JSON.parse(createValidCarouselJson(5));
+    json.slides[2].slideType = 'COVER';
+    assert.throws(
+      () => carouselOutputSchema.parse(json),
+      (err: any) => err.errors.some((e: any) => e.message.includes('Intermediate slide 3 must have slideType "BODY"'))
+    );
+  });
+
+  await test('10f. [F-02] Rejects carousel when slide numbers are not sequential starting at 1', async () => {
+    const json = JSON.parse(createValidCarouselJson(5));
+    json.slides[1].slideNumber = 4; // Expected 2, got 4
+    assert.throws(
+      () => carouselOutputSchema.parse(json),
+      (err: any) => err.errors.some((e: any) => e.message.includes('Slide at position 2 must have slideNumber 2 (got 4)'))
+    );
+  });
+
   // 3. API ENDPOINT & PERSISTENCE TESTS
   await test('11. POST /api/v1/ai/generate/carousel generates, validates and persists CAROUSEL history', async () => {
     mockClient.mockResponse = createValidCarouselJson(7);
@@ -267,6 +327,7 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin, cookie: editorCookie },
       payload: {
         topic: '10 Essential Git Commands Every Developer Must Know',
@@ -309,12 +370,83 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin, cookie: editorCookie },
-      payload: { topic: 'Testing 1-shot repair on carousel generation' },
+      payload: { topic: 'Testing 1-shot repair on carousel generation', slidesCount: 5 },
     });
 
     assert.equal(res.statusCode, 200);
     assert.equal(calls, 2, 'Should attempt exactly 1 repair');
+    GenerationMutex.completeReset();
+  });
+
+  await test('12b. [F-03] Bounded 1-shot repair successfully rescues slide count mismatch', async () => {
+    // Requested 5 slides, but model initially returns 6 slides
+    const initial6Slides = createValidCarouselJson(6);
+    const repaired5Slides = createValidCarouselJson(5);
+
+    let calls = 0;
+    mockClient.generateCompletion = async (options: any) => {
+      calls++;
+      if (calls === 1) {
+        return { response: initial6Slides, totalDurationMs: 80 };
+      }
+      // Verify repair prompt mentions the validation error
+      assert.ok(options.prompt.includes('IMPORTANT REPAIR REQUEST'), 'Repair prompt must contain repair instructions');
+      assert.ok(options.prompt.includes('Carousel must contain exactly 5 slides'), 'Repair prompt must explain count mismatch');
+      return { response: repaired5Slides, totalDurationMs: 90 };
+    };
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {
+        topic: 'Testing 1-shot repair on slide count mismatch',
+        slidesCount: 5,
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(calls, 2, 'Should trigger exactly 1 repair attempt');
+    const body = JSON.parse(res.body);
+    assert.equal(body.data.slides.length, 5);
+    GenerationMutex.completeReset();
+  });
+
+  await test('12c. [F-03] Bounded 1-shot repair successfully rescues slide sequence integrity failure', async () => {
+    // Initial output has first slide as BODY instead of COVER
+    const invalidSequenceObj = JSON.parse(createValidCarouselJson(5));
+    invalidSequenceObj.slides[0].slideType = 'BODY';
+    const invalidSequenceJson = JSON.stringify(invalidSequenceObj);
+    const validJson = createValidCarouselJson(5);
+
+    let calls = 0;
+    mockClient.generateCompletion = async (options: any) => {
+      calls++;
+      if (calls === 1) {
+        return { response: invalidSequenceJson, totalDurationMs: 80 };
+      }
+      assert.ok(options.prompt.includes('First slide must have slideType'), 'Repair prompt must explain sequence error');
+      return { response: validJson, totalDurationMs: 90 };
+    };
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {
+        topic: 'Testing 1-shot repair on slide sequence error',
+        slidesCount: 5,
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(calls, 2, 'Should trigger exactly 1 repair attempt');
+    const body = JSON.parse(res.body);
+    assert.equal(body.data.slides[0].slideType, 'COVER');
     GenerationMutex.completeReset();
   });
 
@@ -327,6 +459,7 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin, cookie: editorCookie },
       payload: { topic: 'Unrepairable JSON generation test' },
     });
@@ -349,8 +482,9 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin, cookie: ownerCookie },
-      payload: { topic: 'Testing OWNER role permissions' },
+      payload: { topic: 'Testing OWNER role permissions', slidesCount: 5 },
     });
     assert.equal(res.statusCode, 200);
   });
@@ -359,8 +493,9 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin, cookie: adminCookie },
-      payload: { topic: 'Testing ADMIN role permissions' },
+      payload: { topic: 'Testing ADMIN role permissions', slidesCount: 5 },
     });
     assert.equal(res.statusCode, 200);
   });
@@ -369,8 +504,20 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin, cookie: approverCookie },
-      payload: { topic: 'Testing APPROVER role permissions' },
+      payload: { topic: 'Testing APPROVER role permissions', slidesCount: 5 },
+    });
+    assert.equal(res.statusCode, 200);
+  });
+
+  await test('16b. RBAC: EDITOR is authorized to generate carousel', async () => {
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: { topic: 'Testing EDITOR role permissions explicitly', slidesCount: 5 },
     });
     assert.equal(res.statusCode, 200);
   });
@@ -379,6 +526,7 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin, cookie: analystCookie },
       payload: { topic: 'Testing ANALYST role rejection' },
     });
@@ -389,6 +537,7 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin },
       payload: { topic: 'Unauthenticated generation attempt' },
     });
@@ -405,6 +554,7 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin, cookie: editorCookie },
       payload: { topic: 'Testing timeout lifecycle in carousel generator' },
     });
@@ -425,6 +575,7 @@ async function runCarouselTests() {
     const res = await server.inject({
       method: 'POST',
       url: '/api/v1/ai/generate/carousel',
+      remoteAddress: getNextIp(),
       headers: { origin: frontendOrigin, cookie: editorCookie },
       payload: { topic: 'Testing busy engine rejection' },
     });
@@ -445,6 +596,32 @@ async function runCarouselTests() {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.ok(body.data.every((h: any) => h.generationType === 'CAROUSEL'));
+  });
+
+  // 6. REGRESSION: SAVE-TO-DRAFT UNSUPPORTED FOR CAROUSEL
+  await test('22. [Regression] Attempting to save a CAROUSEL history record to Draft returns HTTP 422 SAVE_TO_DRAFT_UNSUPPORTED', async () => {
+    // Create a CAROUSEL generation history record in PostgreSQL
+    const carouselHistory = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 150,
+        inputPayload: { topic: 'Testing Save-to-Draft rejection for carousel' },
+        outputPayload: JSON.parse(createValidCarouselJson(5)),
+      },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${carouselHistory.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {},
+    });
+
+    assert.equal(res.statusCode, 422, 'Attempting to save CAROUSEL history to Draft must return HTTP 422');
+    const body = JSON.parse(res.body);
+    assert.ok(body.message.includes('SAVE_TO_DRAFT_UNSUPPORTED'), 'Error message must specify SAVE_TO_DRAFT_UNSUPPORTED');
   });
 
   console.log('\n======================================================');

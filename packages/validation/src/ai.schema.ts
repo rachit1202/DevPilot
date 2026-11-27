@@ -135,7 +135,7 @@ export const carouselSlideSchema = z.object({
   cta: z.string().max(300).optional(),
 });
 
-export const carouselOutputSchema = z.object({
+export const carouselOutputBaseSchema = z.object({
   title: z.string().min(3, 'Carousel title must be at least 3 characters.').max(200),
   topic: z.string().min(5, 'Topic must be at least 5 characters.').max(500),
   targetAudience: z.string().max(200).optional(),
@@ -144,6 +144,75 @@ export const carouselOutputSchema = z.object({
     .min(5, 'Carousel must contain at least 5 slides.')
     .max(10, 'Carousel must contain at most 10 slides.'),
 });
+
+/**
+ * Creates a validated carousel output schema.
+ * Enforces:
+ * - F-01: Exact slide count matching expectedSlidesCount (when specified).
+ * - F-02: Slide sequence integrity:
+ *   * Sequential slide numbers starting at 1 with no duplicates or gaps.
+ *   * First slide must have slideType='COVER'.
+ *   * Last slide must have slideType='CTA'.
+ *   * All intermediate slides must have slideType='BODY'.
+ */
+export function createCarouselOutputSchema(expectedSlidesCount?: number) {
+  return carouselOutputBaseSchema.superRefine((data, ctx) => {
+    // F-01: Exact slide count validation
+    if (expectedSlidesCount !== undefined && data.slides.length !== expectedSlidesCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Carousel must contain exactly ${expectedSlidesCount} slides (got ${data.slides.length}).`,
+        path: ['slides'],
+      });
+    }
+
+    // F-02: Slide sequence integrity
+    if (data.slides.length > 0) {
+      // First slide must be COVER
+      if (data.slides[0].slideType !== 'COVER') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'First slide must have slideType "COVER".',
+          path: ['slides', 0, 'slideType'],
+        });
+      }
+
+      // Last slide must be CTA
+      if (data.slides.length > 1 && data.slides[data.slides.length - 1].slideType !== 'CTA') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Last slide must have slideType "CTA".',
+          path: ['slides', data.slides.length - 1, 'slideType'],
+        });
+      }
+
+      // Intermediate slides must be BODY
+      for (let i = 1; i < data.slides.length - 1; i++) {
+        if (data.slides[i].slideType !== 'BODY') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Intermediate slide ${i + 1} must have slideType "BODY".`,
+            path: ['slides', i, 'slideType'],
+          });
+        }
+      }
+
+      // Slide numbers must be strictly sequential starting at 1
+      for (let i = 0; i < data.slides.length; i++) {
+        const expectedNum = i + 1;
+        if (data.slides[i].slideNumber !== expectedNum) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Slide at position ${i + 1} must have slideNumber ${expectedNum} (got ${data.slides[i].slideNumber}).`,
+            path: ['slides', i, 'slideNumber'],
+          });
+        }
+      }
+    }
+  });
+}
+
+export const carouselOutputSchema = createCarouselOutputSchema();
 
 // ==========================================
 // 3. ENGINE RESET & STATUS SCHEMAS
