@@ -6,6 +6,7 @@ import {
   generateCtaInputSchema,
   generateRewriteInputSchema,
   generateCarouselInputSchema,
+  generateReelScriptInputSchema,
   GenerateIdeasInput,
   GenerateCaptionInput,
   GenerateHooksInput,
@@ -13,6 +14,7 @@ import {
   GenerateCtaInput,
   GenerateRewriteInput,
   GenerateCarouselInput,
+  GenerateReelScriptInput,
   IdeasOutput,
   CaptionOutput,
   HooksOutput,
@@ -21,6 +23,8 @@ import {
   RewriteOutput,
   CarouselOutput,
   CarouselSlide,
+  ReelScriptOutput,
+  ReelScene,
 } from '@devpilot/validation';
 import { AIStatusData } from '../../lib/ai-api';
 import { ApiError } from '../../lib/api';
@@ -29,7 +33,7 @@ import { ApiError } from '../../lib/api';
 // 1. TOOL IDENTIFIERS & TYPES
 // ==========================================
 
-export type StudioToolId = 'ideas' | 'caption' | 'hooks' | 'hashtags' | 'cta' | 'rewrite' | 'carousel';
+export type StudioToolId = 'ideas' | 'caption' | 'hooks' | 'hashtags' | 'cta' | 'rewrite' | 'carousel' | 'reel-script';
 
 export interface StudioToolConfig {
   id: StudioToolId;
@@ -43,6 +47,16 @@ export interface StudioToolConfig {
 }
 
 export const STUDIO_TOOLS: Record<StudioToolId, StudioToolConfig> = {
+  'reel-script': {
+    id: 'reel-script',
+    name: 'Reel Script',
+    badge: 'Short-Form Video',
+    description: 'Generate high-retention scene-by-scene Reel scripts for 30s, 60s, and 90s developer videos.',
+    inputLabel: 'Topic or Video Concept',
+    inputPlaceholder: 'e.g. 3 clean code habits that will make your PR reviews a breeze...',
+    minChars: 5,
+    maxChars: 500,
+  },
   carousel: {
     id: 'carousel',
     name: 'Carousel Outline',
@@ -159,6 +173,16 @@ export interface CarouselFormState {
   additionalInstructions: string;
 }
 
+export interface ReelScriptFormState {
+  topic: string;
+  duration: 30 | 60 | 90;
+  platform: 'INSTAGRAM_REELS' | 'YOUTUBE_SHORTS' | 'TIKTOK' | 'GENERAL';
+  targetAudience: string;
+  tone: string;
+  language: string;
+  additionalInstructions: string;
+}
+
 export interface StudioFormsState {
   ideas: IdeasFormState;
   caption: CaptionFormState;
@@ -167,9 +191,19 @@ export interface StudioFormsState {
   cta: CtaFormState;
   rewrite: RewriteFormState;
   carousel: CarouselFormState;
+  'reel-script': ReelScriptFormState;
 }
 
 export const INITIAL_FORMS_STATE: StudioFormsState = {
+  'reel-script': {
+    topic: '',
+    duration: 60,
+    platform: 'INSTAGRAM_REELS',
+    targetAudience: '',
+    tone: '',
+    language: 'en',
+    additionalInstructions: '',
+  },
   carousel: {
     topic: '',
     tone: '',
@@ -427,6 +461,34 @@ export function validateCarouselInput(form: CarouselFormState): ToolValidationRe
   return { isValid: true, errorMessage: null, payload: parsed.data };
 }
 
+export function validateReelScriptInput(form: ReelScriptFormState): ToolValidationResult<GenerateReelScriptInput> {
+  const raw: Record<string, unknown> = {
+    topic: form.topic.trim(),
+    duration: typeof form.duration === 'number' ? form.duration : Number(form.duration) || 60,
+    platform: form.platform || 'INSTAGRAM_REELS',
+    language: form.language.trim() || 'en',
+  };
+  if (form.tone.trim()) {
+    raw.tone = form.tone.trim();
+  }
+  if (form.targetAudience.trim()) {
+    raw.targetAudience = form.targetAudience.trim();
+  }
+  if (form.additionalInstructions.trim()) {
+    raw.additionalInstructions = form.additionalInstructions.trim();
+  }
+
+  const parsed = generateReelScriptInputSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      isValid: false,
+      errorMessage: parsed.error.issues[0]?.message || 'Invalid Reel Script input.',
+      payload: null,
+    };
+  }
+  return { isValid: true, errorMessage: null, payload: parsed.data };
+}
+
 // ==========================================
 // 5. ERROR MESSAGE NORMALIZATION
 // ==========================================
@@ -528,6 +590,42 @@ export function formatCarouselForCopy(data: CarouselOutput): string {
 
   const slidesFormatted = data.slides.map(formatCarouselSlideForCopy).join('\n\n---\n\n');
   return `${headerParts.join('\n')}\n\n---\n\n${slidesFormatted}`;
+}
+
+export function formatReelSceneForCopy(scene: ReelScene): string {
+  const parts: string[] = [
+    `[Scene ${scene.sceneNumber}: ${scene.sceneTitle} (${scene.durationSeconds}s)]`,
+    `Visual: ${scene.visualDirection}`,
+    `Voiceover: ${scene.voiceover}`,
+  ];
+  if (scene.onScreenText) {
+    parts.push(`On-Screen Text: ${scene.onScreenText}`);
+  }
+  return parts.join('\n');
+}
+
+export function formatReelScriptForCopy(data: ReelScriptOutput): string {
+  const headerParts: string[] = [
+    `# ${data.title}`,
+    `Topic: ${data.topic}`,
+    `Duration: ${data.duration}s | Platform: ${data.platform || 'INSTAGRAM_REELS'}`,
+  ];
+  if (data.targetAudience) {
+    headerParts.push(`Target Audience: ${data.targetAudience}`);
+  }
+  headerParts.push(`\n**Opening Hook:**\n${data.hook}`);
+
+  const scenesFormatted = data.scenes.map(formatReelSceneForCopy).join('\n\n---\n\n');
+
+  const closingParts: string[] = [`**Call to Action:**\n${data.cta}`];
+  if (data.suggestedCaption) {
+    closingParts.push(`**Suggested Caption:**\n${data.suggestedCaption}`);
+  }
+  if (data.suggestedHashtags && data.suggestedHashtags.length > 0) {
+    closingParts.push(`**Suggested Hashtags:**\n${data.suggestedHashtags.join(' ')}`);
+  }
+
+  return `${headerParts.join('\n')}\n\n---\n\n${scenesFormatted}\n\n---\n\n${closingParts.join('\n\n')}`;
 }
 
 // ==========================================

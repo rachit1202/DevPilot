@@ -7,6 +7,7 @@ import {
   GenerateCtaInput,
   GenerateRewriteInput,
   GenerateCarouselInput,
+  GenerateReelScriptInput,
   SaveToDraftInput,
   IdeasOutput,
   CaptionOutput,
@@ -15,6 +16,7 @@ import {
   CtaOutput,
   RewriteOutput,
   CarouselOutput,
+  ReelScriptOutput,
 } from '@devpilot/validation';
 import { ContentType, ContentCategory, PostStatus } from '@devpilot/shared';
 
@@ -62,12 +64,13 @@ export type HashtagsGenerationResponse = AIGenerationResponse<HashtagsOutput>;
 export type CtaGenerationResponse = AIGenerationResponse<CtaOutput>;
 export type RewriteGenerationResponse = AIGenerationResponse<RewriteOutput>;
 export type CarouselGenerationResponse = AIGenerationResponse<CarouselOutput>;
+export type ReelScriptGenerationResponse = AIGenerationResponse<ReelScriptOutput>;
 
 // ==========================================
 // 3. GENERATION HISTORY TYPES
 // ==========================================
 
-export type AIGenerationType = 'IDEAS' | 'CAPTION' | 'HOOKS' | 'HASHTAGS' | 'CTA' | 'REWRITE' | 'CAROUSEL';
+export type AIGenerationType = 'IDEAS' | 'CAPTION' | 'HOOKS' | 'HASHTAGS' | 'CTA' | 'REWRITE' | 'CAROUSEL' | 'REEL_SCRIPT';
 
 export interface AIHistoryItem {
   id: string;
@@ -224,6 +227,16 @@ export async function generateRewrite(payload: GenerateRewriteInput): Promise<Re
  */
 export async function generateCarousel(payload: GenerateCarouselInput): Promise<CarouselGenerationResponse> {
   return apiRequest<CarouselGenerationResponse>('/ai/generate/carousel', {
+    method: 'POST',
+    data: payload,
+  });
+}
+
+/**
+ * Generates a scene-by-scene Reel Script for short-form video (30s, 60s, or 90s).
+ */
+export async function generateReelScript(payload: GenerateReelScriptInput): Promise<ReelScriptGenerationResponse> {
+  return apiRequest<ReelScriptGenerationResponse>('/ai/generate/reel-script', {
     method: 'POST',
     data: payload,
   });

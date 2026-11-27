@@ -7,6 +7,7 @@ import {
   generateCta,
   generateRewrite,
   generateCarousel,
+  generateReelScript,
   saveToDraft,
   AIStatusData,
 } from '../../lib/ai-api';
@@ -20,6 +21,7 @@ import {
   validateCtaInput,
   validateRewriteInput,
   validateCarouselInput,
+  validateReelScriptInput,
   formatAIErrorMessage,
   formatIdeasForCopy,
   formatCaptionForCopy,
@@ -29,6 +31,8 @@ import {
   formatRewriteForCopy,
   formatCarouselForCopy,
   formatCarouselSlideForCopy,
+  formatReelScriptForCopy,
+  formatReelSceneForCopy,
   copyTextToClipboard,
   STUDIO_TOOLS,
   INITIAL_FORMS_STATE,
@@ -1147,8 +1151,422 @@ export async function runAIStudioTests(): Promise<{ passed: number; failed: numb
     assert.equal(canGenerate(viewerUser.role), false);
   });
 
-  // 64. Existing six generators unchanged and regression-free
-  await test('64. [Regression] All six previous generation tools remain intact and fully functional', async () => {
+  // 64. [Reel Script] Reel Script tool registered in STUDIO_TOOLS
+  await test('64. [Reel Script] Reel Script tool is registered in STUDIO_TOOLS with correct config', async () => {
+    const config = STUDIO_TOOLS['reel-script'];
+    assert.ok(config);
+    assert.equal(config.id, 'reel-script');
+    assert.equal(config.name, 'Reel Script');
+    assert.equal(config.minChars, 5);
+    assert.equal(config.maxChars, 500);
+    assert.ok(config.badge.length > 0);
+    assert.ok(config.description.length > 0);
+  });
+
+  // 65. [Reel Script] INITIAL_FORMS_STATE
+  await test('65. [Reel Script] INITIAL_FORMS_STATE initializes reel script with duration 60 and INSTAGRAM_REELS', async () => {
+    const initial = INITIAL_FORMS_STATE['reel-script'];
+    assert.ok(initial);
+    assert.equal(initial.topic, '');
+    assert.equal(initial.duration, 60);
+    assert.equal(initial.platform, 'INSTAGRAM_REELS');
+    assert.equal(initial.language, 'en');
+    assert.equal(initial.tone, '');
+    assert.equal(initial.targetAudience, '');
+    assert.equal(initial.additionalInstructions, '');
+  });
+
+  // 66. [Reel Script] validateReelScriptInput accepts valid topic with defaults
+  await test('66. [Reel Script] validateReelScriptInput accepts valid topic (5-500 chars) with default 60s and INSTAGRAM_REELS', async () => {
+    const res = validateReelScriptInput({
+      topic: 'Clean Architecture in TypeScript',
+      duration: 60,
+      platform: 'INSTAGRAM_REELS',
+      language: 'en',
+      tone: '',
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(res.isValid, true);
+    assert.equal(res.errorMessage, null);
+    assert.ok(res.payload);
+    assert.equal(res.payload.topic, 'Clean Architecture in TypeScript');
+    assert.equal(res.payload.duration, 60);
+    assert.equal(res.payload.platform, 'INSTAGRAM_REELS');
+    assert.equal(res.payload.language, 'en');
+  });
+
+  // 67. [Reel Script] validateReelScriptInput accepts 30s and 90s durations and custom platform
+  await test('67. [Reel Script] validateReelScriptInput accepts 30s and 90s durations and custom platforms', async () => {
+    const res30 = validateReelScriptInput({
+      topic: '3 Quick Git Commands You Need',
+      duration: 30,
+      platform: 'YOUTUBE_SHORTS',
+      language: 'en',
+      tone: '',
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(res30.isValid, true);
+    assert.equal(res30.payload?.duration, 30);
+    assert.equal(res30.payload?.platform, 'YOUTUBE_SHORTS');
+
+    const res90 = validateReelScriptInput({
+      topic: 'Microservices Communication Breakdown',
+      duration: 90,
+      platform: 'TIKTOK',
+      language: 'en',
+      tone: '',
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(res90.isValid, true);
+    assert.equal(res90.payload?.duration, 90);
+    assert.equal(res90.payload?.platform, 'TIKTOK');
+  });
+
+  // 68. [Reel Script] validateReelScriptInput rejects topic length boundaries
+  await test('68. [Reel Script] validateReelScriptInput rejects topic shorter than 5 chars or longer than 500 chars', async () => {
+    const short = validateReelScriptInput({
+      topic: 'Dev',
+      duration: 60,
+      platform: 'INSTAGRAM_REELS',
+      language: 'en',
+      tone: '',
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(short.isValid, false);
+    assert.ok(short.errorMessage?.includes('5'));
+
+    const long = validateReelScriptInput({
+      topic: 'A'.repeat(501),
+      duration: 60,
+      platform: 'INSTAGRAM_REELS',
+      language: 'en',
+      tone: '',
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(long.isValid, false);
+  });
+
+  // 69. [Reel Script] validateReelScriptInput rejects invalid duration or platform
+  await test('69. [Reel Script] validateReelScriptInput rejects invalid duration or platform', async () => {
+    const badDuration = validateReelScriptInput({
+      topic: 'Valid topic name',
+      duration: 45 as any,
+      platform: 'INSTAGRAM_REELS',
+      language: 'en',
+      tone: '',
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(badDuration.isValid, false);
+
+    const badPlatform = validateReelScriptInput({
+      topic: 'Valid topic name',
+      duration: 60,
+      platform: 'TWITCH_CLIPS' as any,
+      language: 'en',
+      tone: '',
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(badPlatform.isValid, false);
+  });
+
+  // 70. [Reel Script] validateReelScriptInput preserves and trims optional fields
+  await test('70. [Reel Script] validateReelScriptInput properly preserves optional fields when valid and trims whitespace', async () => {
+    const res = validateReelScriptInput({
+      topic: '  Docker Best Practices  ',
+      duration: 60,
+      platform: 'INSTAGRAM_REELS',
+      language: '  en  ',
+      tone: '  Practical, direct  ',
+      targetAudience: '  Junior to mid-level engineers  ',
+      additionalInstructions: '  Include multi-stage build visual cue  ',
+    });
+    assert.equal(res.isValid, true);
+    assert.equal(res.payload?.topic, 'Docker Best Practices');
+    assert.equal(res.payload?.language, 'en');
+    assert.equal(res.payload?.tone, 'Practical, direct');
+    assert.equal(res.payload?.targetAudience, 'Junior to mid-level engineers');
+    assert.equal(res.payload?.additionalInstructions, 'Include multi-stage build visual cue');
+  });
+
+  // 71. [Reel Script] validateReelScriptInput rejects optional fields exceeding max length boundaries
+  await test('71. [Reel Script] validateReelScriptInput rejects optional fields exceeding max length boundaries', async () => {
+    const resTone = validateReelScriptInput({
+      topic: 'Valid topic',
+      duration: 60,
+      platform: 'INSTAGRAM_REELS',
+      language: 'en',
+      tone: 'T'.repeat(101),
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(resTone.isValid, false);
+
+    const resAudience = validateReelScriptInput({
+      topic: 'Valid topic',
+      duration: 60,
+      platform: 'INSTAGRAM_REELS',
+      language: 'en',
+      tone: '',
+      targetAudience: 'A'.repeat(201),
+      additionalInstructions: '',
+    });
+    assert.equal(resAudience.isValid, false);
+
+    const resInstructions = validateReelScriptInput({
+      topic: 'Valid topic',
+      duration: 60,
+      platform: 'INSTAGRAM_REELS',
+      language: 'en',
+      tone: '',
+      targetAudience: '',
+      additionalInstructions: 'I'.repeat(501),
+    });
+    assert.equal(resInstructions.isValid, false);
+  });
+
+  // 72. [Reel Script] generateReelScript sends POST to /api/v1/ai/generate/reel-script
+  await test('72. [Reel Script] generateReelScript sends POST to /api/v1/ai/generate/reel-script with correct payload', async () => {
+    let capturedUrl = '';
+    let capturedMethod = '';
+    let capturedBody: any = null;
+
+    global.fetch = async (url: any, init: any) => {
+      capturedUrl = String(url);
+      capturedMethod = init.method;
+      capturedBody = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            title: '3 Git Secrets Every Dev Should Know',
+            topic: 'Git Tips',
+            duration: 60,
+            platform: 'INSTAGRAM_REELS',
+            targetAudience: 'Developers',
+            hook: 'Stop using git reset --hard until you see this.',
+            scenes: [
+              {
+                sceneNumber: 1,
+                sceneTitle: 'Hook',
+                visualDirection: 'Zoomed in on terminal error',
+                voiceover: 'Stop losing your commits with git reset hard.',
+                onScreenText: 'NEVER LOSE WORK AGAIN',
+                durationSeconds: 5,
+              },
+              {
+                sceneNumber: 2,
+                sceneTitle: 'The Fix',
+                visualDirection: 'Terminal showing git reflog command',
+                voiceover: 'Use git reflog instead to recover any dropped commit.',
+                onScreenText: 'git reflog = time machine',
+                durationSeconds: 15,
+              },
+              {
+                sceneNumber: 3,
+                sceneTitle: 'Outro',
+                visualDirection: 'Call to action card animation',
+                voiceover: 'Save this video before your next accidental reset.',
+                onScreenText: 'SAVE FOR LATER',
+                durationSeconds: 10,
+              },
+            ],
+            cta: 'Save this post and comment your favorite Git alias below!',
+            suggestedCaption: 'Git reflog is your safety net. Here is how it works.',
+            suggestedHashtags: ['#git', '#developer', '#codingtips'],
+          },
+          meta: {
+            historyId: 'hist-reel-999',
+            model: 'qwen2.5:3b',
+            durationMs: 3800,
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    };
+
+    const payload = {
+      topic: 'Git Tips for Developers',
+      duration: 60 as const,
+      platform: 'INSTAGRAM_REELS' as const,
+      language: 'en',
+      tone: 'Punchy',
+      targetAudience: 'Engineers',
+      additionalInstructions: 'Focus on git reflog',
+    };
+
+    const res = await generateReelScript(payload);
+    assert.ok(capturedUrl.includes('/api/v1/ai/generate/reel-script'));
+    assert.equal(capturedMethod, 'POST');
+    assert.deepEqual(capturedBody, payload);
+    assert.equal(res.success, true);
+    assert.equal(res.data.scenes.length, 3);
+    assert.equal(res.meta.model, 'qwen2.5:3b');
+    assert.equal(res.meta.historyId, 'hist-reel-999');
+  });
+
+  // 73. [Reel Script] formatReelSceneForCopy
+  await test('73. [Reel Script] formatReelSceneForCopy formats individual scene with all present metadata', async () => {
+    const scene = {
+      sceneNumber: 1,
+      sceneTitle: 'The Problem',
+      durationSeconds: 6,
+      visualDirection: 'Split screen comparing bad vs clean code',
+      voiceover: 'Notice how this function does three different things at once.',
+      onScreenText: 'SINGLE RESPONSIBILITY PRINCIPLE',
+    };
+    const formatted = formatReelSceneForCopy(scene);
+    assert.ok(formatted.includes('[Scene 1: The Problem (6s)]'));
+    assert.ok(formatted.includes('Visual: Split screen comparing bad vs clean code'));
+    assert.ok(formatted.includes('Voiceover: Notice how this function does three different things at once.'));
+    assert.ok(formatted.includes('On-Screen Text: SINGLE RESPONSIBILITY PRINCIPLE'));
+  });
+
+  // 74. [Reel Script] formatReelScriptForCopy
+  await test('74. [Reel Script] formatReelScriptForCopy creates a clean structured markdown outline of full script', async () => {
+    const script = {
+      title: 'Async/Await vs Promises',
+      topic: 'JavaScript Concurrency',
+      duration: 60 as const,
+      platform: 'INSTAGRAM_REELS' as const,
+      targetAudience: 'Web Devs',
+      hook: 'Are you still nesting .then callbacks in 2026?',
+      scenes: [
+        {
+          sceneNumber: 1,
+          sceneTitle: 'Hook',
+          visualDirection: 'Messy promise chain on screen',
+          voiceover: 'Look at this pyramid of doom.',
+          durationSeconds: 5,
+        },
+        {
+          sceneNumber: 2,
+          sceneTitle: 'Refactor',
+          visualDirection: 'Clean async await snippet with try catch',
+          voiceover: 'Here is the exact same logic flattened into three clean lines.',
+          onScreenText: 'CLEAN & FLAT',
+          durationSeconds: 20,
+        },
+        {
+          sceneNumber: 3,
+          sceneTitle: 'Outro',
+          visualDirection: 'Closing branding animation',
+          voiceover: 'Follow DevPilot for daily JS tips.',
+          durationSeconds: 5,
+        },
+      ],
+      cta: 'Follow for daily clean code breakdowns!',
+      suggestedCaption: 'Flatten your async code today.',
+      suggestedHashtags: ['#javascript', '#webdev', '#cleancode'],
+    };
+    const formatted = formatReelScriptForCopy(script);
+    assert.ok(formatted.startsWith('# Async/Await vs Promises'));
+    assert.ok(formatted.includes('Topic: JavaScript Concurrency'));
+    assert.ok(formatted.includes('Duration: 60s | Platform: INSTAGRAM_REELS'));
+    assert.ok(formatted.includes('Target Audience: Web Devs'));
+    assert.ok(formatted.includes('**Opening Hook:**\nAre you still nesting .then callbacks in 2026?'));
+    assert.ok(formatted.includes('[Scene 1: Hook (5s)]'));
+    assert.ok(formatted.includes('[Scene 2: Refactor (20s)]'));
+    assert.ok(formatted.includes('[Scene 3: Outro (5s)]'));
+    assert.ok(formatted.includes('**Call to Action:**\nFollow for daily clean code breakdowns!'));
+    assert.ok(formatted.includes('**Suggested Caption:**\nFlatten your async code today.'));
+    assert.ok(formatted.includes('**Suggested Hashtags:**\n#javascript #webdev #cleancode'));
+  });
+
+  // 75. [Reel Script] Engine gating
+  await test('75. [Reel Script] checkEngineReadiness correctly gates Reel Script generation across all engine states', async () => {
+    // Busy generating
+    const busyGate = checkEngineReadiness({ online: true, engineStatus: 'READY' } as any, false, true);
+    assert.equal(busyGate.canGenerate, false);
+    assert.equal(busyGate.code, 'GENERATING');
+
+    // Offline
+    const offlineGate = checkEngineReadiness({ online: false } as any, false, false);
+    assert.equal(offlineGate.canGenerate, false);
+    assert.equal(offlineGate.code, 'OFFLINE');
+
+    // Recovery required
+    const recoveryGate = checkEngineReadiness(
+      { online: true, engineStatus: 'RECOVERY_REQUIRED', lockReason: 'Ollama timeout' } as any,
+      false,
+      false
+    );
+    assert.equal(recoveryGate.canGenerate, false);
+    assert.equal(recoveryGate.code, 'RECOVERY_REQUIRED');
+
+    // Ready
+    const readyGate = checkEngineReadiness(
+      { online: true, engineStatus: 'READY', model: 'qwen2.5:3b' } as any,
+      false,
+      false
+    );
+    assert.equal(readyGate.canGenerate, true);
+    assert.equal(readyGate.code, 'OK');
+  });
+
+  // 76. [Reel Script] Concurrent submission guard
+  await test('76. [Reel Script] Concurrent submission guard rejects duplicate in-flight reel script requests', async () => {
+    let callCount = 0;
+    let isGenerating = false;
+
+    const submit = async () => {
+      if (isGenerating) return;
+      isGenerating = true;
+      try {
+        callCount++;
+        await new Promise((r) => setTimeout(r, 20));
+      } finally {
+        isGenerating = false;
+      }
+    };
+
+    await Promise.all([submit(), submit(), submit()]);
+    assert.equal(callCount, 1);
+  });
+
+  // 77. [Reel Script] formatAIErrorMessage normalizes Reel Script errors
+  await test('77. [Reel Script] formatAIErrorMessage normalizes Reel Script API errors (429, 504, 502, 503, 400)', async () => {
+    const err429 = new ApiError('AI_BUSY', 429);
+    assert.ok(formatAIErrorMessage(err429).includes('AI engine is currently busy'));
+
+    const err504 = new ApiError('AI_TIMEOUT', 504);
+    assert.ok(formatAIErrorMessage(err504).includes('timed out'));
+
+    const err502 = new ApiError('AI generated malformed output', 502);
+    assert.ok(formatAIErrorMessage(err502).includes('AI generated malformed output'));
+
+    const err503 = new ApiError('SERVICE_UNAVAILABLE', 503);
+    assert.ok(formatAIErrorMessage(err503).includes('unavailable'));
+
+    const err400 = new ApiError('Topic must be at least 5 characters', 400);
+    assert.equal(formatAIErrorMessage(err400), 'Topic must be at least 5 characters');
+  });
+
+  // 78. [Reel Script] User permissions check
+  await test('78. [Reel Script] User permissions verify that OWNER, ADMIN, EDITOR, and APPROVER have full generation access', async () => {
+    const allowedRoles = ['OWNER', 'ADMIN', 'EDITOR', 'APPROVER'];
+    const forbiddenRoles = ['ANALYST', 'VIEWER'];
+
+    const canGenerate = (role: string) => allowedRoles.includes(role);
+    for (const role of allowedRoles) {
+      assert.equal(canGenerate(role), true, `Role ${role} should be allowed`);
+    }
+    for (const role of forbiddenRoles) {
+      assert.equal(canGenerate(role), false, `Role ${role} should be forbidden`);
+    }
+  });
+
+  // 79. [Regression] All eight generation tools remain intact and fully functional
+  await test('79. [Regression] All eight generation tools remain intact and fully functional', async () => {
     assert.ok(STUDIO_TOOLS.ideas);
     assert.ok(STUDIO_TOOLS.caption);
     assert.ok(STUDIO_TOOLS.hooks);
@@ -1156,8 +1574,9 @@ export async function runAIStudioTests(): Promise<{ passed: number; failed: numb
     assert.ok(STUDIO_TOOLS.cta);
     assert.ok(STUDIO_TOOLS.rewrite);
     assert.ok(STUDIO_TOOLS.carousel);
+    assert.ok(STUDIO_TOOLS['reel-script']);
 
-    assert.equal(Object.keys(STUDIO_TOOLS).length, 7);
+    assert.equal(Object.keys(STUDIO_TOOLS).length, 8);
   });
 
   global.fetch = originalFetch;

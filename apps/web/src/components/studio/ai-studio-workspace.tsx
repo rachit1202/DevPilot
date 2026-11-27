@@ -9,6 +9,7 @@ import {
   generateCta,
   generateRewrite,
   generateCarousel,
+  generateReelScript,
   AIStatusData,
   AIGenerationMeta,
 } from '@/lib/ai-api';
@@ -25,6 +26,7 @@ import {
   validateCtaInput,
   validateRewriteInput,
   validateCarouselInput,
+  validateReelScriptInput,
   formatAIErrorMessage,
 } from './ai-studio-logic';
 import { AIOutputContainer } from './ai-output-cards';
@@ -45,6 +47,7 @@ import {
   RotateCcw,
   Info,
   Layers,
+  Film,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -70,6 +73,7 @@ export function AIStudioWorkspace({
   const [activeTool, setActiveTool] = useState<StudioToolId>('ideas');
   const [formsState, setFormsState] = useState<StudioFormsState>(INITIAL_FORMS_STATE);
   const [outputsState, setOutputsState] = useState<Record<StudioToolId, ToolOutputEntry | null>>({
+    'reel-script': null,
     carousel: null,
     ideas: null,
     caption: null,
@@ -100,6 +104,8 @@ export function AIStudioWorkspace({
 
   const validation = useMemo(() => {
     switch (activeTool) {
+      case 'reel-script':
+        return validateReelScriptInput(formsState['reel-script']);
       case 'carousel':
         return validateCarouselInput(formsState.carousel);
       case 'ideas':
@@ -120,6 +126,8 @@ export function AIStudioWorkspace({
   // Current primary text character count
   const currentTextLength = useMemo(() => {
     switch (activeTool) {
+      case 'reel-script':
+        return formsState['reel-script'].topic.length;
       case 'carousel':
         return formsState.carousel.topic.length;
       case 'ideas':
@@ -153,6 +161,9 @@ export function AIStudioWorkspace({
       let res: any = null;
 
       switch (activeTool) {
+        case 'reel-script':
+          res = await generateReelScript(validation.payload as any);
+          break;
         case 'carousel':
           res = await generateCarousel(validation.payload as any);
           break;
@@ -210,6 +221,8 @@ export function AIStudioWorkspace({
   const renderToolIcon = (id: StudioToolId, isActive: boolean) => {
     const iconClass = cn('w-4 h-4', isActive ? 'text-devpilot-purple' : 'text-devpilot-muted');
     switch (id) {
+      case 'reel-script':
+        return <Film className={iconClass} />;
       case 'carousel':
         return <Layers className={iconClass} />;
       case 'ideas':
@@ -285,6 +298,194 @@ export function AIStudioWorkspace({
             </div>
 
             {/* Tool-specific form fields */}
+            {activeTool === 'reel-script' && (
+              <>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <label className="font-semibold text-devpilot-text">
+                      Topic or Video Concept *
+                    </label>
+                    <span
+                      className={cn(
+                        'text-[11px] font-mono',
+                        currentTextLength > currentConfig.maxChars || (currentTextLength > 0 && currentTextLength < currentConfig.minChars)
+                          ? 'text-rose-400 font-bold'
+                          : 'text-devpilot-subtle'
+                      )}
+                    >
+                      {currentTextLength}/{currentConfig.maxChars}
+                    </span>
+                  </div>
+                  <textarea
+                    value={formsState['reel-script'].topic}
+                    onChange={(e) =>
+                      setFormsState((prev) => ({
+                        ...prev,
+                        'reel-script': { ...prev['reel-script'], topic: e.target.value },
+                      }))
+                    }
+                    placeholder={currentConfig.inputPlaceholder}
+                    rows={3}
+                    className="w-full rounded-lg bg-devpilot-bg border border-devpilot-border p-3 text-xs text-devpilot-text placeholder:text-devpilot-subtle focus:outline-none focus:border-devpilot-purple resize-y font-sans"
+                    disabled={isGenerating}
+                  />
+                  {currentTextLength > 0 && currentTextLength < currentConfig.minChars && (
+                    <p className="text-[11px] text-rose-400">
+                      Topic must be at least {currentConfig.minChars} characters.
+                    </p>
+                  )}
+                </div>
+
+                {/* Target Duration Selector (30s, 60s, 90s) */}
+                <div className="space-y-2 p-3 rounded-lg bg-devpilot-surface/60 border border-devpilot-border/60">
+                  <div className="flex items-center justify-between text-xs">
+                    <label className="font-semibold text-devpilot-text flex items-center gap-2">
+                      <span>Target Video Duration</span>
+                      <Badge variant="purple" className="text-[10px] font-mono px-1.5 py-0">
+                        {formsState['reel-script'].duration}s
+                      </Badge>
+                    </label>
+                    <span className="text-[11px] text-devpilot-subtle">Target timing & scenes</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([30, 60, 90] as const).map((dur) => {
+                      const isSelected = formsState['reel-script'].duration === dur;
+                      const label = dur === 30 ? '30s (Quick Tip)' : dur === 60 ? '60s (Standard)' : '90s (Deep Dive)';
+                      return (
+                        <button
+                          key={dur}
+                          type="button"
+                          onClick={() =>
+                            setFormsState((prev) => ({
+                              ...prev,
+                              'reel-script': { ...prev['reel-script'], duration: dur },
+                            }))
+                          }
+                          disabled={isGenerating}
+                          className={cn(
+                            'py-2 px-2.5 rounded-lg text-xs font-medium border text-center transition-all select-none',
+                            isSelected
+                              ? 'bg-devpilot-purple/20 border-devpilot-purple text-devpilot-text font-bold shadow-sm'
+                              : 'bg-devpilot-card/80 border-devpilot-border text-devpilot-muted hover:border-devpilot-borderHover hover:text-devpilot-text'
+                          )}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Target Platform Selector */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-devpilot-text">
+                    Target Platform
+                  </label>
+                  <select
+                    value={formsState['reel-script'].platform}
+                    onChange={(e) =>
+                      setFormsState((prev) => ({
+                        ...prev,
+                        'reel-script': {
+                          ...prev['reel-script'],
+                          platform: e.target.value as any,
+                        },
+                      }))
+                    }
+                    className="w-full h-9 rounded-lg bg-devpilot-bg border border-devpilot-border px-3 text-xs text-devpilot-text focus:outline-none focus:border-devpilot-purple font-sans"
+                    disabled={isGenerating}
+                  >
+                    <option value="INSTAGRAM_REELS">Instagram Reels (Default)</option>
+                    <option value="YOUTUBE_SHORTS">YouTube Shorts</option>
+                    <option value="TIKTOK">TikTok</option>
+                    <option value="GENERAL">General Short-Form Video</option>
+                  </select>
+                </div>
+
+                {/* Tone of Voice */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-devpilot-text">
+                    Tone of Voice <span className="text-devpilot-subtle font-normal">(Optional, max 100)</span>
+                  </label>
+                  <Input
+                    value={formsState['reel-script'].tone}
+                    onChange={(e) =>
+                      setFormsState((prev) => ({
+                        ...prev,
+                        'reel-script': { ...prev['reel-script'], tone: e.target.value },
+                      }))
+                    }
+                    placeholder="e.g. Informative, energetic, developer-friendly..."
+                    className="h-9 text-xs"
+                    disabled={isGenerating}
+                    maxLength={100}
+                  />
+                </div>
+
+                {/* Target Audience & Language (2-column layout) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-devpilot-text">
+                      Target Audience <span className="text-devpilot-subtle font-normal">(Optional, max 200)</span>
+                    </label>
+                    <Input
+                      value={formsState['reel-script'].targetAudience}
+                      onChange={(e) =>
+                        setFormsState((prev) => ({
+                          ...prev,
+                          'reel-script': { ...prev['reel-script'], targetAudience: e.target.value },
+                        }))
+                      }
+                      placeholder="e.g. Web developers, students..."
+                      className="h-9 text-xs"
+                      disabled={isGenerating}
+                      maxLength={200}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-devpilot-text">
+                      Language <span className="text-devpilot-subtle font-normal">(Default: en, max 50)</span>
+                    </label>
+                    <Input
+                      value={formsState['reel-script'].language}
+                      onChange={(e) =>
+                        setFormsState((prev) => ({
+                          ...prev,
+                          'reel-script': { ...prev['reel-script'], language: e.target.value },
+                        }))
+                      }
+                      placeholder="e.g. en, es, hi..."
+                      className="h-9 text-xs"
+                      disabled={isGenerating}
+                      maxLength={50}
+                    />
+                  </div>
+                </div>
+
+                {/* Additional Instructions */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-devpilot-text">
+                    Additional Instructions <span className="text-devpilot-subtle font-normal">(Optional, max 500)</span>
+                  </label>
+                  <textarea
+                    value={formsState['reel-script'].additionalInstructions}
+                    onChange={(e) =>
+                      setFormsState((prev) => ({
+                        ...prev,
+                        'reel-script': { ...prev['reel-script'], additionalInstructions: e.target.value },
+                      }))
+                    }
+                    placeholder="e.g. Include a code debugging visual direction and focus on common mistakes..."
+                    rows={2}
+                    className="w-full rounded-lg bg-devpilot-bg border border-devpilot-border p-3 text-xs text-devpilot-text placeholder:text-devpilot-subtle focus:outline-none focus:border-devpilot-purple resize-y font-sans"
+                    disabled={isGenerating}
+                    maxLength={500}
+                  />
+                </div>
+              </>
+            )}
+
             {activeTool === 'carousel' && (
               <>
                 <div className="space-y-1.5">

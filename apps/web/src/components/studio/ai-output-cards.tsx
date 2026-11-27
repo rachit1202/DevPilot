@@ -10,6 +10,8 @@ import {
   RewriteOutput,
   CarouselOutput,
   CarouselSlide,
+  ReelScriptOutput,
+  ReelScene,
 } from '@devpilot/validation';
 import { AIGenerationMeta } from '@/lib/ai-api';
 import {
@@ -22,6 +24,8 @@ import {
   formatRewriteForCopy,
   formatCarouselForCopy,
   formatCarouselSlideForCopy,
+  formatReelScriptForCopy,
+  formatReelSceneForCopy,
   StudioToolId,
 } from './ai-studio-logic';
 import { Badge } from '@/components/ui/badge';
@@ -44,6 +48,9 @@ import {
   Layers,
   Eye,
   ArrowRight,
+  Film,
+  Mic,
+  Type,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -157,6 +164,8 @@ function OutputHeader({
         return <Repeat className="w-4 h-4 text-indigo-400" />;
       case 'carousel':
         return <Layers className="w-4 h-4 text-devpilot-purple" />;
+      case 'reel-script':
+        return <Film className="w-4 h-4 text-rose-400" />;
     }
   };
 
@@ -758,6 +767,269 @@ export function CarouselOutputCard({
   );
 }
 
+export function ReelScriptOutputCard({
+  data,
+  meta,
+}: {
+  data: ReelScriptOutput;
+  meta: AIGenerationMeta;
+}) {
+  const fullCopyText = formatReelScriptForCopy(data);
+
+  const formatPlatformLabel = (platform?: string) => {
+    switch (platform) {
+      case 'INSTAGRAM_REELS':
+        return 'Instagram Reels';
+      case 'YOUTUBE_SHORTS':
+        return 'YouTube Shorts';
+      case 'TIKTOK':
+        return 'TikTok';
+      default:
+        return 'General Video';
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <OutputHeader
+        title="Reel Script"
+        toolId="reel-script"
+        meta={meta}
+        copyAllText={fullCopyText}
+      />
+
+      {/* Script Header & Metadata Summary */}
+      <div className="p-4 rounded-xl bg-devpilot-surface/70 border border-devpilot-border/80 space-y-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-devpilot-text tracking-tight">
+            {data.title}
+          </h3>
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <Badge variant="purple" className="text-[10px] font-mono">
+              {data.duration}s Target
+            </Badge>
+            <Badge variant="cyan" className="text-[10px] font-semibold">
+              {formatPlatformLabel(data.platform)}
+            </Badge>
+            <Badge variant="default" className="text-[10px] font-mono">
+              {data.scenes.length} Scenes
+            </Badge>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-devpilot-muted pt-1 border-t border-devpilot-border/40">
+          <div>
+            <span className="text-devpilot-subtle">Topic: </span>
+            <span className="text-devpilot-text font-medium">{data.topic}</span>
+          </div>
+          {data.targetAudience && (
+            <div>
+              <span className="text-devpilot-subtle">Audience: </span>
+              <span className="text-devpilot-text font-medium">{data.targetAudience}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Opening Hook Card */}
+      <div className="p-4 rounded-xl bg-gradient-to-r from-purple-500/10 via-devpilot-surface to-devpilot-surface border border-purple-500/30 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
+            <span className="text-xs font-bold uppercase tracking-wider text-purple-300">
+              Opening Hook (0:00 - 0:05)
+            </span>
+          </div>
+          <CopyButton
+            text={data.hook}
+            size="icon"
+            className="shrink-0 h-7 w-7"
+            title="Copy opening hook"
+          />
+        </div>
+        <p className="text-xs text-devpilot-text font-medium leading-relaxed">
+          "{data.hook}"
+        </p>
+      </div>
+
+      {/* Sequential Scenes Timeline */}
+      <div className="space-y-3.5">
+        <div className="flex items-center justify-between px-1">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-devpilot-subtle flex items-center gap-2">
+            <Film className="w-3.5 h-3.5 text-devpilot-cyan" />
+            Scene Timeline ({data.scenes.length} Scenes)
+          </h4>
+        </div>
+
+        {data.scenes.map((scene) => {
+          const sceneCopyText = formatReelSceneForCopy(scene);
+
+          return (
+            <div
+              key={scene.sceneNumber}
+              className="p-4 rounded-xl bg-devpilot-surface/70 border border-devpilot-border hover:border-devpilot-borderHover transition-all space-y-3"
+            >
+              {/* Scene Header */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="w-5 h-5 rounded-full bg-devpilot-surface border border-devpilot-border text-devpilot-text text-xs font-bold font-mono flex items-center justify-center">
+                    {scene.sceneNumber}
+                  </span>
+                  <span className="text-xs font-bold text-devpilot-text">
+                    {scene.sceneTitle}
+                  </span>
+                  <Badge variant="default" className="text-[10px] font-mono">
+                    {scene.durationSeconds}s
+                  </Badge>
+                </div>
+                <CopyButton
+                  text={sceneCopyText}
+                  size="icon"
+                  className="shrink-0 h-7 w-7"
+                  title="Copy entire scene"
+                />
+              </div>
+
+              {/* Visual Direction */}
+              <div className="p-2.5 rounded-lg bg-devpilot-bg/70 border border-devpilot-border/50 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-devpilot-cyan">
+                    <Eye className="w-3.5 h-3.5" />
+                    Visual Direction
+                  </span>
+                  <CopyButton
+                    text={scene.visualDirection}
+                    size="icon"
+                    className="shrink-0 h-6 w-6"
+                    title="Copy visual direction"
+                  />
+                </div>
+                <p className="text-xs text-devpilot-muted leading-relaxed font-sans">
+                  {scene.visualDirection}
+                </p>
+              </div>
+
+              {/* Spoken Voiceover */}
+              <div className="p-2.5 rounded-lg bg-purple-500/5 border border-purple-500/20 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-purple-300">
+                    <Mic className="w-3.5 h-3.5" />
+                    Voiceover Dialogue
+                  </span>
+                  <CopyButton
+                    text={scene.voiceover}
+                    size="icon"
+                    className="shrink-0 h-6 w-6"
+                    title="Copy voiceover"
+                  />
+                </div>
+                <p className="text-xs text-devpilot-text font-medium leading-relaxed italic">
+                  "{scene.voiceover}"
+                </p>
+              </div>
+
+              {/* On-Screen Text (Overlay) */}
+              {scene.onScreenText && (
+                <div className="p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-400">
+                      <Type className="w-3.5 h-3.5" />
+                      On-Screen Text Overlay
+                    </span>
+                    <CopyButton
+                      text={scene.onScreenText}
+                      size="icon"
+                      className="shrink-0 h-6 w-6"
+                      title="Copy on-screen text"
+                    />
+                  </div>
+                  <p className="text-xs text-amber-200/90 font-mono tracking-wide">
+                    {scene.onScreenText}
+                  </p>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Closing Section: CTA, Suggested Caption & Hashtags */}
+      <div className="p-4 rounded-xl bg-devpilot-surface/70 border border-devpilot-border/80 space-y-3.5">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-devpilot-subtle flex items-center gap-2">
+          <Megaphone className="w-3.5 h-3.5 text-devpilot-purple" />
+          Closing & Engagement
+        </h4>
+
+        {/* Call to Action */}
+        <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-semibold text-emerald-400">
+              Call to Action (Outro)
+            </span>
+            <CopyButton
+              text={data.cta}
+              size="icon"
+              className="shrink-0 h-6 w-6"
+              title="Copy call to action"
+            />
+          </div>
+          <p className="text-xs text-devpilot-text font-medium leading-relaxed">
+            {data.cta}
+          </p>
+        </div>
+
+        {/* Suggested Caption */}
+        {data.suggestedCaption && (
+          <div className="p-3 rounded-lg bg-devpilot-card border border-devpilot-border/70 space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-devpilot-muted">
+                Suggested Social Caption
+              </span>
+              <CopyButton
+                text={data.suggestedCaption}
+                size="icon"
+                className="shrink-0 h-6 w-6"
+                title="Copy suggested caption"
+              />
+            </div>
+            <p className="text-xs text-devpilot-text whitespace-pre-line leading-relaxed">
+              {data.suggestedCaption}
+            </p>
+          </div>
+        )}
+
+        {/* Suggested Hashtags */}
+        {data.suggestedHashtags && data.suggestedHashtags.length > 0 && (
+          <div className="p-3 rounded-lg bg-devpilot-card border border-devpilot-border/70 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-devpilot-muted flex items-center gap-1.5">
+                <Hash className="w-3.5 h-3.5 text-devpilot-cyan" />
+                Suggested Hashtags ({data.suggestedHashtags.length})
+              </span>
+              <CopyButton
+                text={data.suggestedHashtags.join(' ')}
+                size="icon"
+                className="shrink-0 h-6 w-6"
+                title="Copy hashtags"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {data.suggestedHashtags.map((tag, idx) => (
+                <span
+                  key={idx}
+                  className="px-2 py-0.5 rounded-md bg-devpilot-surface border border-devpilot-border text-[11px] font-mono text-devpilot-cyan"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ==========================================
 // 4. MASTER OUTPUT DISPATCHER
 // ==========================================
@@ -866,6 +1138,13 @@ export function AIOutputContainer({
       return (
         <CarouselOutputCard
           data={outputData as CarouselOutput}
+          meta={meta}
+        />
+      );
+    case 'reel-script':
+      return (
+        <ReelScriptOutputCard
+          data={outputData as ReelScriptOutput}
           meta={meta}
         />
       );
