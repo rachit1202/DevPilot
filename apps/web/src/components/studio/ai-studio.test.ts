@@ -41,6 +41,7 @@ import {
   canUserPromoteToDraft,
   validateSaveToDraftForm,
   formatSaveToDraftError,
+  INITIAL_SAVE_TO_DRAFT_FORM_STATE,
 } from './save-to-draft-logic';
 import {
   getAIHistoryPermissions,
@@ -1577,6 +1578,135 @@ export async function runAIStudioTests(): Promise<{ passed: number; failed: numb
     assert.ok(STUDIO_TOOLS['reel-script']);
 
     assert.equal(Object.keys(STUDIO_TOOLS).length, 8);
+  });
+
+  // =========================================================================
+  // REEL SCRIPT SAVE-TO-DRAFT TESTS (M2.3.4.5.3)
+  // =========================================================================
+
+  await test('80. [Reel Script Save-to-Draft] validateSaveToDraftForm accepts valid reel-script output with default title (empty payload)', async () => {
+    const validReelData = {
+      title: '5 Clean Code Habits for React',
+      topic: 'Clean Code in React',
+      duration: 30,
+      platform: 'INSTAGRAM_REELS',
+      hook: 'Stop bloating components!',
+      scenes: [
+        { sceneNumber: 1, sceneTitle: 'Scene 1', visualDirection: 'Visual 1', voiceover: 'Voiceover 1', durationSeconds: 10 },
+        { sceneNumber: 2, sceneTitle: 'Scene 2', visualDirection: 'Visual 2', voiceover: 'Voiceover 2', durationSeconds: 10 },
+        { sceneNumber: 3, sceneTitle: 'Scene 3', visualDirection: 'Visual 3', voiceover: 'Voiceover 3', durationSeconds: 10 },
+      ],
+      cta: 'Follow for more!',
+    };
+
+    const res = validateSaveToDraftForm('reel-script', { ...INITIAL_SAVE_TO_DRAFT_FORM_STATE, title: '' }, validReelData);
+    assert.equal(res.isValid, true);
+    assert.equal(res.isSupported, true);
+    assert.equal(res.errorMessage, null);
+    assert.deepEqual(res.payload, {});
+  });
+
+  await test('81. [Reel Script Save-to-Draft] validateSaveToDraftForm accepts custom valid title override (3..200 chars)', async () => {
+    const validReelData = {
+      title: '5 Clean Code Habits for React',
+      duration: 30,
+      scenes: [{ sceneNumber: 1, sceneTitle: 'S1', visualDirection: 'V1', voiceover: 'VO1', durationSeconds: 10 }],
+    };
+
+    const res = validateSaveToDraftForm('reel-script', { ...INITIAL_SAVE_TO_DRAFT_FORM_STATE, title: 'My Custom Reel Post Title' }, validReelData);
+    assert.equal(res.isValid, true);
+    assert.deepEqual(res.payload, { title: 'My Custom Reel Post Title' });
+  });
+
+  await test('82. [Reel Script Save-to-Draft] validateSaveToDraftForm rejects custom title shorter than 3 chars or longer than 200 chars', async () => {
+    const validReelData = { title: '5 Habits', duration: 30 };
+
+    const tooShort = validateSaveToDraftForm('reel-script', { ...INITIAL_SAVE_TO_DRAFT_FORM_STATE, title: 'AB' }, validReelData);
+    assert.equal(tooShort.isValid, false);
+    assert.ok(tooShort.errorMessage?.includes('at least 3 characters'));
+
+    const tooLong = validateSaveToDraftForm('reel-script', { ...INITIAL_SAVE_TO_DRAFT_FORM_STATE, title: 'A'.repeat(201) }, validReelData);
+    assert.equal(tooLong.isValid, false);
+    assert.ok(tooLong.errorMessage?.includes('not exceed 200 characters'));
+  });
+
+  await test('83. [Reel Script Save-to-Draft] validateSaveToDraftForm treats whitespace-only custom title as empty (uses default)', async () => {
+    const validReelData = { title: '5 Habits', duration: 30 };
+
+    const res = validateSaveToDraftForm('reel-script', { ...INITIAL_SAVE_TO_DRAFT_FORM_STATE, title: '   ' }, validReelData);
+    assert.equal(res.isValid, true);
+    assert.deepEqual(res.payload, {});
+  });
+
+  await test('84. [Reel Script Save-to-Draft] validateSaveToDraftForm rejects when outputData is missing or lacking title', async () => {
+    const missingTitle = validateSaveToDraftForm('reel-script', INITIAL_SAVE_TO_DRAFT_FORM_STATE, null);
+    assert.equal(missingTitle.isValid, false);
+    assert.ok(missingTitle.errorMessage?.includes('missing Reel Script title'));
+  });
+
+  await test('85. [Reel Script Save-to-Draft] saveToDraft client sends correct endpoint and payload for reel script history', async () => {
+    let capturedCall: any = null;
+
+    global.fetch = async (url: any, opts: any) => {
+      capturedCall = { url: String(url), method: opts.method, body: JSON.parse(opts.body) };
+      return {
+        ok: true,
+        headers: { get: () => 'application/json' },
+        json: async () => ({
+          success: true,
+          data: {
+            post: {
+              id: 'post-reel-123',
+              title: 'Custom Title Overridden',
+              caption: '# Serialized Reel Caption',
+              hashtags: ['#react', '#cleancode'],
+              cta: 'Follow @CodeCulture',
+              contentType: 'REEL',
+              status: 'DRAFT',
+              sourceType: 'AI_GENERATED',
+              createdAt: '2026-11-27T12:00:00Z',
+            },
+            history: {
+              id: 'hist-reel-456',
+              resultingPostId: 'post-reel-123',
+            },
+          },
+        }),
+      } as any;
+    };
+
+    const res = await saveToDraft('hist-reel-456', { title: 'Custom Title Overridden' });
+    assert.ok(capturedCall.url.endsWith('/ai/history/hist-reel-456/save-to-draft'));
+    assert.equal(capturedCall.method, 'POST');
+    assert.deepEqual(capturedCall.body, { title: 'Custom Title Overridden' });
+    assert.equal(res.success, true);
+    assert.equal(res.data.post.id, 'post-reel-123');
+    assert.equal(res.data.post.contentType, 'REEL');
+    assert.equal(res.data.post.status, 'DRAFT');
+    assert.equal(res.data.history.resultingPostId, 'post-reel-123');
+  });
+
+  await test('86. [Reel Script Save-to-Draft] formatSaveToDraftError formats REEL_SCRIPT_CONTENT_TOO_LONG user-friendly message', async () => {
+    const err = new ApiError('REEL_SCRIPT_CONTENT_TOO_LONG: Serialized reel script caption exceeds maximum allowed length of 10,000 characters (length: 10001).', 400);
+    const msg = formatSaveToDraftError(err);
+    assert.ok(msg.includes('exceeds the maximum allowed length of 10,000 characters'));
+    assert.ok(msg.includes('cannot be saved to draft'));
+  });
+
+  await test('87. [Reel Script Save-to-Draft] formatSaveToDraftError formats CROSS_USER_PROMOTION_FORBIDDEN ownership error', async () => {
+    const err = new ApiError('CROSS_USER_PROMOTION_FORBIDDEN: Cannot promote generation history owned by another user.', 403);
+    const msg = formatSaveToDraftError(err);
+    assert.ok(msg.includes('You can only promote AI generation history records that you created'));
+  });
+
+  await test('88. [Reel Script Save-to-Draft] Role authorization checks verify OWNER, ADMIN, and EDITOR are permitted; APPROVER and ANALYST are forbidden', async () => {
+    assert.equal(canUserPromoteToDraft('OWNER'), true);
+    assert.equal(canUserPromoteToDraft('ADMIN'), true);
+    assert.equal(canUserPromoteToDraft('EDITOR'), true);
+    assert.equal(canUserPromoteToDraft('APPROVER'), false);
+    assert.equal(canUserPromoteToDraft('ANALYST'), false);
+    assert.equal(canUserPromoteToDraft(undefined), false);
+    assert.equal(canUserPromoteToDraft(null), false);
   });
 
   global.fetch = originalFetch;

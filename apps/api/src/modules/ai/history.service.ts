@@ -1,6 +1,11 @@
 import { prisma } from '../../db/prisma';
 import { ActivityService } from '../activity/activity.service';
-import { AIHistoryQueryInput, SaveToDraftInput, createCarouselOutputSchema } from '@devpilot/validation';
+import {
+  AIHistoryQueryInput,
+  SaveToDraftInput,
+  createCarouselOutputSchema,
+  createReelScriptOutputSchema,
+} from '@devpilot/validation';
 import { AuthUser } from '../../types/fastify';
 import { UserRole, AIGenerationType, Prisma, ContentType, ContentCategory, PostStatus } from '@prisma/client';
 
@@ -568,6 +573,90 @@ export class HistoryService {
           // 5. Extract CTA from CTA slide if present
           const ctaSlide = carousel.slides.find((s) => s.slideType === 'CTA');
           finalCta = ctaSlide?.cta ? String(ctaSlide.cta).trim() : null;
+          break;
+        }
+
+        case AIGenerationType.REEL_SCRIPT: {
+          // 1. Validate persisted outputPayload against canonical ReelScriptOutput schema with duration awareness
+          const duration = typeof output.duration === 'number' ? output.duration : undefined;
+          const reelValidator = createReelScriptOutputSchema(duration);
+          const parsed = reelValidator.safeParse(output);
+          if (!parsed.success) {
+            const err: any = new Error('VALIDATION_ERROR: Persisted reel script output is malformed or invalid.');
+            err.statusCode = 400;
+            err.code = 'VALIDATION_ERROR';
+            throw err;
+          }
+
+          const reel = parsed.data;
+
+          // 2. Title resolution: user-supplied valid override or reel script title
+          if (input.title) {
+            if (typeof input.title !== 'string' || input.title.trim().length < 3 || input.title.trim().length > 200) {
+              const err: any = new Error('VALIDATION_ERROR: Custom title must be between 3 and 200 characters.');
+              err.statusCode = 400;
+              err.code = 'VALIDATION_ERROR';
+              throw err;
+            }
+            finalTitle = input.title.trim();
+          } else {
+            finalTitle = reel.title.trim();
+          }
+
+          // 3. Deterministic Markdown Serialization preserving all structured fields
+          const headerParts: string[] = [
+            `# ${reel.title.trim()}`,
+            `**Topic:** ${reel.topic.trim()}`,
+            `**Duration:** ${reel.duration}s | **Platform:** ${reel.platform || 'INSTAGRAM_REELS'}`,
+          ];
+          if (reel.targetAudience?.trim()) {
+            headerParts.push(`**Target Audience:** ${reel.targetAudience.trim()}`);
+          }
+
+          const hookBlock = `### Opening Hook\n> ${reel.hook.trim()}`;
+
+          const sceneBlocks = reel.scenes.map((s) => {
+            const lines: string[] = [
+              `#### [Scene ${s.sceneNumber}: ${s.sceneTitle.trim()}] (${s.durationSeconds}s)`,
+              `> **Visual:** ${s.visualDirection.trim()}`,
+              `**Voiceover:** "${s.voiceover.trim()}"`,
+            ];
+            if (s.onScreenText?.trim()) {
+              lines.push(`*On-Screen Text:* \`${s.onScreenText.trim()}\``);
+            }
+            return lines.join('\n\n');
+          });
+
+          const ctaBlock = `### Call to Action\n${reel.cta.trim()}`;
+
+          const sections: string[] = [
+            headerParts.join('\n\n'),
+            hookBlock,
+            `### Scene Breakdown\n\n${sceneBlocks.join('\n\n')}`,
+            ctaBlock,
+          ];
+
+          if (reel.suggestedCaption?.trim()) {
+            sections.push(`### Suggested Social Caption\n${reel.suggestedCaption.trim()}`);
+          }
+
+          const serializedCaption = sections.join('\n\n---\n\n');
+
+          // 4. Critical Length Protection (ContentPost.caption max length = 10,000 characters)
+          if (serializedCaption.length > 10000) {
+            const err: any = new Error(
+              `REEL_SCRIPT_CONTENT_TOO_LONG: Serialized reel script caption exceeds maximum allowed length of 10,000 characters (length: ${serializedCaption.length}).`
+            );
+            err.statusCode = 400;
+            err.code = 'REEL_SCRIPT_CONTENT_TOO_LONG';
+            throw err;
+          }
+
+          finalCaption = serializedCaption;
+          finalContentType = ContentType.REEL;
+          finalCategory = ContentCategory.WEB_DEV_TIPS;
+          finalHashtags = Array.isArray(reel.suggestedHashtags) ? reel.suggestedHashtags : [];
+          finalCta = reel.cta.trim();
           break;
         }
 

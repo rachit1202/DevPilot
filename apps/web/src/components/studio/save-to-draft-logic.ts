@@ -279,6 +279,58 @@ export function validateSaveToDraftForm(
     };
   }
 
+  // F. REEL SCRIPT: optional title override (3..200 chars), caption/scenes taken from persisted history
+  if (toolId === 'reel-script') {
+    if (!outputData || typeof outputData !== 'object' || !outputData.title) {
+      return {
+        isValid: false,
+        errorMessage: 'Generation output is missing Reel Script title or data.',
+        payload: null,
+        isSupported: true,
+      };
+    }
+
+    const trimmedTitle = form.title.trim();
+    // If a custom title is entered, validate its bounds (3..200 chars)
+    if (trimmedTitle.length > 0) {
+      if (trimmedTitle.length < 3) {
+        return {
+          isValid: false,
+          errorMessage: 'Custom draft title must be at least 3 characters.',
+          payload: null,
+          isSupported: true,
+        };
+      }
+      if (trimmedTitle.length > 200) {
+        return {
+          isValid: false,
+          errorMessage: 'Custom draft title must not exceed 200 characters.',
+          payload: null,
+          isSupported: true,
+        };
+      }
+    }
+
+    // Only include title in payload if a non-empty custom override is provided
+    const payload: SaveToDraftInput = trimmedTitle ? { title: trimmedTitle } : {};
+    const parsed = saveToDraftSchema.safeParse(payload);
+    if (!parsed.success) {
+      return {
+        isValid: false,
+        errorMessage: parsed.error.issues[0]?.message || 'Invalid payload for Reel Script draft.',
+        payload: null,
+        isSupported: true,
+      };
+    }
+
+    return {
+      isValid: true,
+      errorMessage: null,
+      payload: parsed.data,
+      isSupported: true,
+    };
+  }
+
   return {
     isValid: false,
     errorMessage: 'Unsupported tool generation type.',
@@ -300,6 +352,9 @@ export function formatSaveToDraftError(error: unknown): string {
 
     if (error.status === 409 || rawMsg.includes('DRAFT_ALREADY_EXISTS')) {
       return 'A ContentPost draft has already been created from this generation history record.';
+    }
+    if (rawMsg.includes('REEL_SCRIPT_CONTENT_TOO_LONG')) {
+      return 'The serialized Reel Script exceeds the maximum allowed length of 10,000 characters and cannot be saved to draft.';
     }
     if (error.status === 403) {
       if (rawMsg.includes('CROSS_USER_PROMOTION_FORBIDDEN')) {

@@ -276,6 +276,74 @@ export function SaveToDraftModal({
 
             {/* Tool Specific Views */}
 
+            {/* 0. REEL SCRIPT: Summary & Optional Title Override */}
+            {toolId === 'reel-script' && outputData && (
+              <div className="space-y-3.5">
+                {/* Script Summary Card */}
+                <div className="p-3.5 rounded-lg bg-devpilot-surface border border-devpilot-border/70 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-[10px] font-semibold text-devpilot-cyan uppercase tracking-wider">
+                      Reel Script Summary
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant="purple" className="text-[10px] font-mono">
+                        {outputData.duration}s Target
+                      </Badge>
+                      <Badge variant="default" className="text-[10px] font-mono">
+                        {outputData.scenes?.length || 0} Scenes
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-xs text-devpilot-subtle">Topic: </span>
+                    <span className="text-xs text-devpilot-text font-medium">{outputData.topic}</span>
+                  </div>
+
+                  {outputData.hook && (
+                    <div className="pt-1.5 border-t border-devpilot-border/40">
+                      <span className="text-[10px] text-purple-300 uppercase font-semibold block">Opening Hook</span>
+                      <p className="text-xs text-purple-200 mt-0.5 line-clamp-2 italic">
+                        "{outputData.hook}"
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Optional Custom Title Override */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <label className="font-semibold text-devpilot-text">
+                      Draft Title <span className="text-devpilot-subtle font-normal">(Optional Override)</span>
+                    </label>
+                    <span className={cn(
+                      'text-[11px] font-mono',
+                      formState.title.trim().length > 0 && (formState.title.trim().length < 3 || formState.title.trim().length > 200)
+                        ? 'text-amber-400'
+                        : 'text-devpilot-subtle'
+                    )}>
+                      {formState.title.length > 0 ? `${formState.title.length}/200 (min 3)` : `Default: ${outputData.title}`}
+                    </span>
+                  </div>
+                  <Input
+                    value={formState.title}
+                    onChange={(e) =>
+                      setFormState((prev) => ({
+                        ...prev,
+                        title: e.target.value,
+                      }))
+                    }
+                    placeholder={`Default: ${outputData.title}`}
+                    className="h-9 text-xs"
+                    disabled={isSubmitting}
+                  />
+                  <p className="text-[11px] text-devpilot-subtle">
+                    Leave blank to use the generated Reel Script title.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* 1. CAPTION: Preview Only */}
             {toolId === 'caption' && outputData && (
               <div className="space-y-3">

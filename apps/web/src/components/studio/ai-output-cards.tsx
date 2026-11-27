@@ -770,9 +770,13 @@ export function CarouselOutputCard({
 export function ReelScriptOutputCard({
   data,
   meta,
+  onSaveToDraft,
+  isDraftSaved,
 }: {
   data: ReelScriptOutput;
   meta: AIGenerationMeta;
+  onSaveToDraft?: () => void;
+  isDraftSaved?: boolean;
 }) {
   const fullCopyText = formatReelScriptForCopy(data);
 
@@ -796,6 +800,8 @@ export function ReelScriptOutputCard({
         toolId="reel-script"
         meta={meta}
         copyAllText={fullCopyText}
+        onSaveToDraft={onSaveToDraft}
+        isDraftSaved={isDraftSaved}
       />
 
       {/* Script Header & Metadata Summary */}
@@ -1146,6 +1152,8 @@ export function AIOutputContainer({
         <ReelScriptOutputCard
           data={outputData as ReelScriptOutput}
           meta={meta}
+          onSaveToDraft={onSaveToDraft ? () => onSaveToDraft() : undefined}
+          isDraftSaved={isDraftSaved}
         />
       );
     default:
