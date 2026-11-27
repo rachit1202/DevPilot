@@ -5,3 +5,4 @@ export * from './brand.schema.js';
 export * from './app-settings.schema.js';
 export * from './media.schema.js';
 export * from './calendar.schema.js';
+export * from './ai.schema.js';

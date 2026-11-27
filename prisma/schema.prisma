@@ -66,6 +66,16 @@ enum ApprovalStatus {
   CHANGES_REQUESTED
 }
 
+enum AIGenerationType {
+  IDEAS
+  CAPTION
+  HOOKS
+  HASHTAGS
+  CTA
+  REWRITE
+  CAROUSEL
+}
+
 model User {
   id            String         @id @default(uuid()) @db.Uuid
   name          String
@@ -79,6 +89,7 @@ model User {
   approvalsReq  Approval[]     @relation("ApprovalRequester")
   approvalsRev  Approval[]     @relation("ApprovalReviewer")
   activityLogs  ActivityLog[]
+  generationHistories GenerationHistory[]
 
   @@map("users")
 }
@@ -147,6 +158,7 @@ model ContentPost {
   platformConfigs ContentPlatform[]
   schedules       ContentSchedule[]
   approvals       Approval[]
+  generationHistory GenerationHistory? @relation("PostGenerationSource")
 
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
@@ -267,4 +279,26 @@ model ActivityLog {
   @@index([entityType, entityId])
   @@index([createdAt])
   @@map("activity_logs")
+}
+
+model GenerationHistory {
+  id              String            @id @default(uuid()) @db.Uuid
+  generationType  AIGenerationType  @map("generation_type")
+  inputPayload    Json              @map("input_payload")
+  outputPayload   Json              @map("output_payload")
+  model           String            @default("qwen2.5:3b")
+  durationMs      Int               @map("duration_ms")
+
+  userId          String            @db.Uuid @map("user_id")
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  resultingPostId String?           @unique @db.Uuid @map("resulting_post_id")
+  resultingPost   ContentPost?      @relation("PostGenerationSource", fields: [resultingPostId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([generationType])
+  @@index([createdAt])
+  @@map("generation_histories")
 }

@@ -1,143 +1,111 @@
+import { config } from '../../../config/env';
+
+export interface OllamaGenerateOptions {
+  prompt: string;
+  system?: string;
+  temperature?: number;
+  numPredict?: number;
+  timeoutMs?: number;
+}
+
+export interface OllamaGenerateResponse {
+  response: string;
+  totalDurationMs?: number;
+}
+
 /**
- * Low-level typed Ollama HTTP client.
- * Uses native Node.js fetch with strict timeout and AbortSignal handling.
- * Does not depend on external SDKs.
+ * Dedicated Ollama Client for local AI inference.
+ * Uses native server-side fetch with AbortController.
  */
-
-export interface OllamaModelTag {
-  name: string;
-  model: string;
-  modified_at: string;
-  size: number;
-  digest: string;
-  details?: {
-    parent_model?: string;
-    format?: string;
-    family?: string;
-    families?: string[];
-    parameter_size?: string;
-    quantization_level?: string;
-  };
-}
-
-export interface OllamaTagsResponse {
-  models: OllamaModelTag[];
-}
-
-export interface OllamaVersionResponse {
-  version: string;
-}
-
-export class OllamaProviderError extends Error {
-  public readonly code: string;
-  public readonly statusCode?: number;
-
-  constructor(message: string, code: string, statusCode?: number) {
-    super(message);
-    this.name = 'OllamaProviderError';
-    this.code = code;
-    this.statusCode = statusCode;
-  }
-}
-
 export class OllamaClient {
   private readonly baseUrl: string;
-  private readonly timeoutMs: number;
+  private readonly defaultModel: string;
+  private readonly defaultTimeoutMs: number;
 
-  constructor(baseUrl: string, timeoutMs: number = 15000) {
-    // Strip trailing slash if present
-    this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.timeoutMs = timeoutMs;
+  constructor(
+    baseUrl = config.OLLAMA_BASE_URL,
+    defaultModel = config.OLLAMA_MODEL,
+    defaultTimeoutMs = config.OLLAMA_TIMEOUT_MS
+  ) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.defaultModel = defaultModel;
+    this.defaultTimeoutMs = defaultTimeoutMs;
   }
 
   /**
-   * Helper to perform fetch requests with AbortController and standard error mapping.
+   * Health and connectivity probe.
+   * Checks whether Ollama is reachable and running.
    */
-  private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-
+  async checkHealth(): Promise<{ online: boolean; version?: string; error?: string }> {
     try {
-      const response = await fetch(url, {
-        ...options,
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000); // 10s health check limit
+
+      const res = await fetch(`${this.baseUrl}/api/version`, {
         signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(options.headers || {}),
-        },
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        return { online: false, error: `Ollama returned HTTP ${res.status}` };
+      }
+
+      const data: any = await res.json();
+      return { online: true, version: data.version };
+    } catch (err: any) {
+      return { online: false, error: err.name === 'AbortError' ? 'Health check timed out' : err.message };
+    }
+  }
+
+  /**
+   * Calls Ollama's /api/generate endpoint with JSON output mode.
+   * Enforces configured model and AbortController timeout.
+   */
+  async generateCompletion(options: OllamaGenerateOptions): Promise<OllamaGenerateResponse> {
+    const timeoutMs = options.timeoutMs || this.defaultTimeoutMs;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    const startTime = Date.now();
+    try {
+      const res = await fetch(`${this.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: this.defaultModel,
+          prompt: options.prompt,
+          system: options.system,
+          format: 'json', // Ollama grammar-constrained JSON mode
+          stream: false,
+          options: {
+            temperature: options.temperature ?? 0.7,
+            num_predict: options.numPredict ?? 512,
+          },
+        }),
       });
 
-      if (!response.ok) {
-        throw new OllamaProviderError(
-          `Ollama request failed with HTTP ${response.status}`,
-          'OLLAMA_HTTP_ERROR',
-          response.status
-        );
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        throw new Error(`OLLAMA_HTTP_ERROR_${res.status}: Ollama returned status ${res.status}`);
       }
 
-      return (await response.json()) as T;
-    } catch (err: unknown) {
-      if (err instanceof OllamaProviderError) {
-        throw err;
+      const data: any = await res.json();
+      return {
+        response: data.response || '',
+        totalDurationMs: Date.now() - startTime,
+      };
+    } catch (err: any) {
+      clearTimeout(timer);
+      if (err.name === 'AbortError') {
+        throw new Error(`OLLAMA_TIMEOUT: Inference timed out after ${timeoutMs}ms.`);
       }
-
-      const error = err as Error;
-      if (error.name === 'AbortError') {
-        throw new OllamaProviderError(
-          `Ollama connection timed out after ${this.timeoutMs}ms`,
-          'OLLAMA_TIMEOUT'
-        );
-      }
-
-      // Handle connection refused or network errors safely
-      throw new OllamaProviderError(
-        'Unable to connect to Ollama local service. Ensure Ollama is running.',
-        'OLLAMA_UNAVAILABLE'
-      );
-    } finally {
-      clearTimeout(timeout);
+      throw err;
     }
   }
 
-  /**
-   * Verifies if Ollama is reachable by probing the root or version endpoint.
-   */
-  async ping(): Promise<boolean> {
-    const url = `${this.baseUrl}/`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-
-    try {
-      const res = await fetch(url, { signal: controller.signal });
-      return res.ok;
-    } catch {
-      return false;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  /**
-   * Retrieves the Ollama version string if available.
-   */
-  async getVersion(): Promise<string | null> {
-    try {
-      const data = await this.request<OllamaVersionResponse>('/api/version');
-      return data.version || null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Discovers all models currently installed locally in Ollama.
-   */
-  async listInstalledModels(): Promise<string[]> {
-    const data = await this.request<OllamaTagsResponse>('/api/tags');
-    if (!data || !Array.isArray(data.models)) {
-      return [];
-    }
-    return data.models.map((m) => m.name);
+  getModel(): string {
+    return this.defaultModel;
   }
 }

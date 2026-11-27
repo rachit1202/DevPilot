@@ -8,6 +8,7 @@ const envSchema = z.object({
   COOKIE_SECRET: z.string().min(32, 'COOKIE_SECRET must be at least 32 characters'),
   WEB_URL: z.string().url().default('http://localhost:3000'),
   API_URL: z.string().url().default('http://localhost:4000'),
+  STORAGE_DIR: z.string().default('./storage'),
   UPLOAD_DIR: z.string().default('./storage/uploads'),
   APP_TIMEZONE: z.string().default('Asia/Kolkata'),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().default(10),
@@ -15,7 +16,12 @@ const envSchema = z.object({
   OLLAMA_BASE_URL: z.string().url().default('http://127.0.0.1:11434'),
   OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
   OLLAMA_FALLBACK_MODEL: z.string().default('qwen2.5:1.5b'),
-  OLLAMA_TIMEOUT_MS: z.coerce.number().default(15000),
+  OLLAMA_TIMEOUT_MS: z.coerce
+    .number()
+    .int('OLLAMA_TIMEOUT_MS must be an integer')
+    .min(60000, 'OLLAMA_TIMEOUT_MS must be at least 60000 (1 minute)')
+    .max(300000, 'OLLAMA_TIMEOUT_MS cannot exceed 300000 (5 minutes)')
+    .default(120000),
 });
 
 const parsed = envSchema.safeParse(process.env);

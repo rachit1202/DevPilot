@@ -37,6 +37,16 @@ export function errorHandler(error: FastifyError, request: FastifyRequest, reply
     ? error.statusCode
     : 500;
 
+  // Handle explicit AI persistence failure (500) contract
+  if ((error as any).code === 'HISTORY_PERSISTENCE_FAILED') {
+    return reply.status(500).send({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: error.message,
+      code: 'HISTORY_PERSISTENCE_FAILED',
+    });
+  }
+
   // Log 500 internal server errors safely
   if (statusCode === 500) {
     request.log.error({
