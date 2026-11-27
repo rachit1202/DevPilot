@@ -1,6 +1,6 @@
 import { prisma } from '../../db/prisma';
 import { ActivityService } from '../activity/activity.service';
-import { AIHistoryQueryInput, SaveToDraftInput } from '@devpilot/validation';
+import { AIHistoryQueryInput, SaveToDraftInput, createCarouselOutputSchema } from '@devpilot/validation';
 import { AuthUser } from '../../types/fastify';
 import { UserRole, AIGenerationType, Prisma, ContentType, ContentCategory, PostStatus } from '@prisma/client';
 
@@ -363,7 +363,7 @@ export class HistoryService {
       let finalHashtags: string[] = [];
       let finalCta: string | null = null;
       let finalContentType: ContentType = ContentType.SINGLE_IMAGE;
-      const finalCategory: ContentCategory = ContentCategory.WEB_DEV_TIPS;
+      let finalCategory: ContentCategory = ContentCategory.WEB_DEV_TIPS;
 
       switch (history.generation_type) {
         case AIGenerationType.CAPTION: {
@@ -490,6 +490,84 @@ export class HistoryService {
           finalCaption = `${selectedHook}\n\n${userCaption}`;
           finalHashtags = [];
           finalCta = null;
+          break;
+        }
+
+        case AIGenerationType.CAROUSEL: {
+          // 1. Validate persisted outputPayload against canonical CarouselOutput schema
+          // Notice: carousel output slides array length can be between 5 and 10 slides
+          const slidesCount = Array.isArray(output.slides) ? output.slides.length : undefined;
+          const carouselValidator = createCarouselOutputSchema(slidesCount);
+          const parsed = carouselValidator.safeParse(output);
+          if (!parsed.success) {
+            const err: any = new Error('VALIDATION_ERROR: Persisted carousel output is malformed or invalid.');
+            err.statusCode = 400;
+            err.code = 'VALIDATION_ERROR';
+            throw err;
+          }
+
+          const carousel = parsed.data;
+
+          // 2. Title resolution: user-supplied valid override or carousel output title
+          if (input.title) {
+            if (typeof input.title !== 'string' || input.title.trim().length < 3 || input.title.trim().length > 200) {
+              const err: any = new Error('VALIDATION_ERROR: Custom title must be between 3 and 200 characters.');
+              err.statusCode = 400;
+              err.code = 'VALIDATION_ERROR';
+              throw err;
+            }
+            finalTitle = input.title.trim();
+          } else {
+            finalTitle = carousel.title.trim();
+          }
+
+          // 3. Deterministic Markdown Serialization
+          const headerLines: string[] = [
+            `# ${carousel.title}`,
+            `**Topic:** ${carousel.topic}`,
+          ];
+          if (carousel.targetAudience) {
+            headerLines.push(`**Target Audience:** ${carousel.targetAudience}`);
+          }
+          headerLines.push(`**Slides:** ${carousel.slides.length}`);
+
+          const slideBlocks = carousel.slides.map((s) => {
+            const lines: string[] = [
+              `### [Slide ${s.slideNumber}: ${s.slideType}] ${s.title}`,
+              s.content,
+            ];
+            if (s.hook) {
+              lines.push(`*Hook:* ${s.hook}`);
+            }
+            if (s.cta) {
+              lines.push(`*CTA:* ${s.cta}`);
+            }
+            if (s.visualDirection) {
+              lines.push(`> **Visual Direction:** ${s.visualDirection}`);
+            }
+            return lines.join('\n\n');
+          });
+
+          const serializedCaption = `${headerLines.join('\n\n')}\n\n---\n\n${slideBlocks.join('\n\n---\n\n')}`;
+
+          // 4. Critical Length Protection (ContentPost.caption max length = 10,000 characters)
+          if (serializedCaption.length > 10000) {
+            const err: any = new Error(
+              `CAROUSEL_CONTENT_TOO_LONG: Serialized carousel caption exceeds maximum allowed length of 10,000 characters (length: ${serializedCaption.length}).`
+            );
+            err.statusCode = 400;
+            err.code = 'CAROUSEL_CONTENT_TOO_LONG';
+            throw err;
+          }
+
+          finalCaption = serializedCaption;
+          finalContentType = ContentType.CAROUSEL;
+          finalCategory = ContentCategory.WEB_DEV_TIPS;
+          finalHashtags = [];
+
+          // 5. Extract CTA from CTA slide if present
+          const ctaSlide = carousel.slides.find((s) => s.slideType === 'CTA');
+          finalCta = ctaSlide?.cta ? String(ctaSlide.cta).trim() : null;
           break;
         }
 

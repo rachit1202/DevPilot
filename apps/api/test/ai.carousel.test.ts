@@ -598,30 +598,398 @@ async function runCarouselTests() {
     assert.ok(body.data.every((h: any) => h.generationType === 'CAROUSEL'));
   });
 
-  // 6. REGRESSION: SAVE-TO-DRAFT UNSUPPORTED FOR CAROUSEL
-  await test('22. [Regression] Attempting to save a CAROUSEL history record to Draft returns HTTP 422 SAVE_TO_DRAFT_UNSUPPORTED', async () => {
-    // Create a CAROUSEL generation history record in PostgreSQL
-    const carouselHistory = await prisma.generationHistory.create({
+  // 6. CAROUSEL SAVE-TO-DRAFT INTEGRATION TESTS (M2.3.3.1)
+  await test('22. [M2.3.3.1] Successful Carousel promotion creates Draft ContentPost and links history', async () => {
+    const validJson = createValidCarouselJson(5);
+    const history = await prisma.generationHistory.create({
       data: {
         generationType: AIGenerationType.CAROUSEL,
         userId: editor.id,
         model: 'qwen2.5:3b',
-        durationMs: 150,
-        inputPayload: { topic: 'Testing Save-to-Draft rejection for carousel' },
+        durationMs: 250,
+        inputPayload: { topic: 'Testing Save-to-Draft promotion for carousel' },
+        outputPayload: JSON.parse(validJson),
+      },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {},
+    });
+
+    assert.equal(res.statusCode, 201, 'Successful Save-to-Draft returns HTTP 201');
+    const body = JSON.parse(res.body);
+    assert.equal(body.success, true);
+    assert.ok(body.data.post.id);
+    assert.equal(body.data.post.contentType, 'CAROUSEL');
+    assert.equal(body.data.post.status, 'DRAFT');
+    assert.equal(body.data.post.sourceType, 'AI_GENERATED');
+    assert.equal(body.data.post.createdById, editor.id);
+    assert.equal(body.data.history.resultingPostId, body.data.post.id);
+
+    // Verify deterministic Markdown serialization in caption
+    const caption: string = body.data.post.caption;
+    assert.ok(caption.startsWith('# Mastering TypeScript Generics'));
+    assert.ok(caption.includes('**Topic:** TypeScript generic constraints and advanced utility types'));
+    assert.ok(caption.includes('**Target Audience:** Intermediate TypeScript developers'));
+    assert.ok(caption.includes('**Slides:** 5'));
+    assert.ok(caption.includes('### [Slide 1: COVER] Mastering TypeScript Generics in 2026'));
+    assert.ok(caption.includes('*Hook:* Still writing `as any` in your TypeScript code? Here is how to fix it forever.'));
+    assert.ok(caption.includes('> **Visual Direction:** Bold purple gradient card with glowing code icon'));
+    assert.ok(caption.includes('### [Slide 2: BODY] Step 1: Generic Constraints & Inference'));
+    assert.ok(caption.includes('### [Slide 5: CTA] Summary & Next Steps'));
+    assert.ok(caption.includes('*CTA:* Save this post for your next refactor & follow @CodeCulture for daily web dev insights.'));
+
+    // Verify closing CTA mapped from CTA slide
+    assert.equal(body.data.post.cta, 'Save this post for your next refactor & follow @CodeCulture for daily web dev insights.');
+
+    // Verify database record directly
+    const dbPost = await prisma.contentPost.findUnique({ where: { id: body.data.post.id } });
+    assert.ok(dbPost);
+    assert.equal(dbPost.contentType, 'CAROUSEL');
+
+    // Verify atomic ActivityLog entry
+    const auditLog = await prisma.activityLog.findFirst({
+      where: {
+        action: 'CONTENT_DRAFT_CREATED_FROM_AI',
+        entityId: body.data.post.id,
+      },
+    });
+    assert.ok(auditLog);
+    const meta = auditLog.metadata as any;
+    assert.equal(meta.generationType, 'CAROUSEL');
+    assert.equal(meta.contentType, 'CAROUSEL');
+  });
+
+  await test('23. [M2.3.3.1] Custom title override in request payload is respected', async () => {
+    const history = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 200,
+        inputPayload: { topic: 'Testing custom title' },
         outputPayload: JSON.parse(createValidCarouselJson(5)),
       },
     });
 
     const res = await server.inject({
       method: 'POST',
-      url: `/api/v1/ai/history/${carouselHistory.id}/save-to-draft`,
+      url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: { title: 'My Custom Git Carousel Title' },
+    });
+
+    assert.equal(res.statusCode, 201);
+    const body = JSON.parse(res.body);
+    assert.equal(body.data.post.title, 'My Custom Git Carousel Title');
+  });
+
+  await test('24. [M2.3.3.1] Cross-user promotion is strictly forbidden (403)', async () => {
+    // History owned by editor
+    const history = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 200,
+        inputPayload: { topic: 'Testing cross-user promotion forbidden' },
+        outputPayload: JSON.parse(createValidCarouselJson(5)),
+      },
+    });
+
+    // Admin attempts to promote editor's history
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: adminCookie },
+      payload: {},
+    });
+
+    assert.equal(res.statusCode, 403);
+    const body = JSON.parse(res.body);
+    assert.ok(body.message.includes('CROSS_USER_PROMOTION_FORBIDDEN'));
+  });
+
+  await test('25. [M2.3.3.1] APPROVER and ANALYST are forbidden from promoting to draft (403)', async () => {
+    const approverHistory = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: approver.id,
+        model: 'qwen2.5:3b',
+        durationMs: 200,
+        inputPayload: { topic: 'Testing approver promotion' },
+        outputPayload: JSON.parse(createValidCarouselJson(5)),
+      },
+    });
+
+    const resApprover = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${approverHistory.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: approverCookie },
+      payload: {},
+    });
+    assert.equal(resApprover.statusCode, 403);
+
+    const resAnalyst = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${approverHistory.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: analystCookie },
+      payload: {},
+    });
+    assert.equal(resAnalyst.statusCode, 403);
+  });
+
+  await test('26. [M2.3.3.1] Duplicate promotion returns HTTP 409 DRAFT_ALREADY_EXISTS', async () => {
+    const history = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 200,
+        inputPayload: { topic: 'Testing duplicate promotion' },
+        outputPayload: JSON.parse(createValidCarouselJson(5)),
+      },
+    });
+
+    // First promotion succeeds
+    const res1 = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {},
+    });
+    assert.equal(res1.statusCode, 201);
+
+    // Second promotion is rejected
+    const res2 = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {},
+    });
+    assert.equal(res2.statusCode, 409);
+    const body2 = JSON.parse(res2.body);
+    assert.ok(body2.message.includes('DRAFT_ALREADY_EXISTS'));
+  });
+
+  await test('27. [M2.3.3.1] Concurrent promotion attempts create exactly one Draft', async () => {
+    const history = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 200,
+        inputPayload: { topic: 'Testing concurrent promotion' },
+        outputPayload: JSON.parse(createValidCarouselJson(5)),
+      },
+    });
+
+    const [resA, resB] = await Promise.all([
+      server.inject({
+        method: 'POST',
+        url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+        headers: { origin: frontendOrigin, cookie: editorCookie },
+        payload: {},
+      }),
+      server.inject({
+        method: 'POST',
+        url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+        headers: { origin: frontendOrigin, cookie: editorCookie },
+        payload: {},
+      }),
+    ]);
+
+    const statuses = [resA.statusCode, resB.statusCode].sort();
+    assert.deepEqual(statuses, [201, 409], 'One concurrent request must succeed (201) and the other fail with 409');
+  });
+
+  await test('28. [M2.3.3.1] Re-promotion is allowed after deleting the linked Draft (SetNull)', async () => {
+    const history = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 200,
+        inputPayload: { topic: 'Testing re-promotion after deletion' },
+        outputPayload: JSON.parse(createValidCarouselJson(5)),
+      },
+    });
+
+    // 1. Promote to draft
+    const res1 = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {},
+    });
+    assert.equal(res1.statusCode, 201);
+    const draftId = JSON.parse(res1.body).data.post.id;
+
+    // 2. Delete the created Draft
+    await prisma.contentPost.delete({ where: { id: draftId } });
+
+    // 3. Verify history resultingPostId is now NULL via SetNull
+    const refreshed = await prisma.generationHistory.findUnique({ where: { id: history.id } });
+    assert.equal(refreshed?.resultingPostId, null);
+
+    // 4. Re-promotion succeeds cleanly
+    const res2 = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {},
+    });
+    assert.equal(res2.statusCode, 201);
+  });
+
+  await test('29. [M2.3.3.1] Malformed persisted Carousel output returns 400 VALIDATION_ERROR', async () => {
+    const corruptedHistory = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 200,
+        inputPayload: { topic: 'Testing corrupted output' },
+        outputPayload: { title: 'Corrupted', slides: [{ slideNumber: 1, slideType: 'INVALID' }] },
+      },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${corruptedHistory.id}/save-to-draft`,
       headers: { origin: frontendOrigin, cookie: editorCookie },
       payload: {},
     });
 
-    assert.equal(res.statusCode, 422, 'Attempting to save CAROUSEL history to Draft must return HTTP 422');
+    assert.equal(res.statusCode, 400);
     const body = JSON.parse(res.body);
-    assert.ok(body.message.includes('SAVE_TO_DRAFT_UNSUPPORTED'), 'Error message must specify SAVE_TO_DRAFT_UNSUPPORTED');
+    assert.ok(body.message.includes('VALIDATION_ERROR'));
+  });
+
+  await test('30. [M2.3.3.1] Oversized carousel caption (>10000 chars) is rejected with CAROUSEL_CONTENT_TOO_LONG without partial writes', async () => {
+    // Construct a valid Carousel JSON where slide contents exceed 10,000 characters total
+    const hugeContent = 'a'.repeat(980); // 10 slides * 980 chars = ~10,500 chars with headers
+    const hugeSlides = Array.from({ length: 10 }, (_, i) => ({
+      slideNumber: i + 1,
+      slideType: i === 0 ? 'COVER' : i === 9 ? 'CTA' : 'BODY',
+      title: `Slide Title ${i + 1}`,
+      content: hugeContent,
+      visualDirection: 'Visual note',
+      hook: i === 0 ? 'Big hook' : undefined,
+      cta: i === 9 ? 'Big cta' : undefined,
+    }));
+
+    const hugeHistory = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 200,
+        inputPayload: { topic: 'Testing oversized carousel' },
+        outputPayload: {
+          title: 'Oversized Carousel Test',
+          topic: 'Massive Slides',
+          targetAudience: 'Testing Audience',
+          slides: hugeSlides,
+        },
+      },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${hugeHistory.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {},
+    });
+
+    assert.equal(res.statusCode, 400);
+    const body = JSON.parse(res.body);
+    assert.ok(body.message.includes('CAROUSEL_CONTENT_TOO_LONG'));
+
+    // Verify history was NOT updated
+    const refreshed = await prisma.generationHistory.findUnique({ where: { id: hugeHistory.id } });
+    assert.equal(refreshed?.resultingPostId, null);
+
+    // Verify no ContentPost was created
+    const postCount = await prisma.contentPost.count({ where: { title: 'Oversized Carousel Test' } });
+    assert.equal(postCount, 0);
+  });
+
+  await test('31. [M2.3.3.1] Content Library retrieval and update of created Carousel Draft', async () => {
+    // Promote a carousel
+    const history = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CAROUSEL,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 200,
+        inputPayload: { topic: 'Testing library integration' },
+        outputPayload: JSON.parse(createValidCarouselJson(5)),
+      },
+    });
+
+    const resSave = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${history.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {},
+    });
+    assert.equal(resSave.statusCode, 201);
+    const draftId = JSON.parse(resSave.body).data.post.id;
+
+    // 1. Fetch via Content Library endpoint
+    const resGet = await server.inject({
+      method: 'GET',
+      url: `/api/v1/content/${draftId}`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+    });
+    assert.equal(resGet.statusCode, 200);
+    const postData = JSON.parse(resGet.body).data.post;
+    assert.equal(postData.contentType, 'CAROUSEL');
+    assert.equal(postData.status, 'DRAFT');
+
+    // 2. Edit the draft via PATCH /content/:id
+    const updatedCaption = postData.caption + '\n\n---\n*Edited by user in Content Library*';
+    const resPatch = await server.inject({
+      method: 'PATCH',
+      url: `/api/v1/content/${draftId}`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {
+        caption: updatedCaption,
+      },
+    });
+    assert.equal(resPatch.statusCode, 200);
+
+    // 3. Confirm update persisted
+    const dbPost = await prisma.contentPost.findUnique({ where: { id: draftId } });
+    assert.ok(dbPost?.caption.includes('*Edited by user in Content Library*'));
+  });
+
+  await test('32. [Regression] CTA and HASHTAGS continue to return 422 SAVE_TO_DRAFT_UNSUPPORTED', async () => {
+    const ctaHistory = await prisma.generationHistory.create({
+      data: {
+        generationType: AIGenerationType.CTA,
+        userId: editor.id,
+        model: 'qwen2.5:3b',
+        durationMs: 100,
+        inputPayload: { goal: 'Test CTA' },
+        outputPayload: { ctas: ['CTA 1', 'CTA 2', 'CTA 3'] },
+      },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: `/api/v1/ai/history/${ctaHistory.id}/save-to-draft`,
+      headers: { origin: frontendOrigin, cookie: editorCookie },
+      payload: {},
+    });
+
+    assert.equal(res.statusCode, 422);
+    const body = JSON.parse(res.body);
+    assert.ok(body.message.includes('SAVE_TO_DRAFT_UNSUPPORTED'));
   });
 
   console.log('\n======================================================');
