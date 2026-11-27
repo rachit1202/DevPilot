@@ -8,6 +8,8 @@ import {
   HashtagsOutput,
   CtaOutput,
   RewriteOutput,
+  CarouselOutput,
+  CarouselSlide,
 } from '@devpilot/validation';
 import { AIGenerationMeta } from '@/lib/ai-api';
 import {
@@ -18,6 +20,8 @@ import {
   formatHashtagsForCopy,
   formatCtaForCopy,
   formatRewriteForCopy,
+  formatCarouselForCopy,
+  formatCarouselSlideForCopy,
   StudioToolId,
 } from './ai-studio-logic';
 import { Badge } from '@/components/ui/badge';
@@ -37,6 +41,9 @@ import {
   Repeat,
   FilePlus,
   CheckCircle2,
+  Layers,
+  Eye,
+  ArrowRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -148,6 +155,8 @@ function OutputHeader({
         return <Megaphone className="w-4 h-4 text-rose-400" />;
       case 'rewrite':
         return <Repeat className="w-4 h-4 text-indigo-400" />;
+      case 'carousel':
+        return <Layers className="w-4 h-4 text-devpilot-purple" />;
     }
   };
 
@@ -613,6 +622,142 @@ export function RewriteOutputCard({
   );
 }
 
+export function CarouselOutputCard({
+  data,
+  meta,
+}: {
+  data: CarouselOutput;
+  meta: AIGenerationMeta;
+}) {
+  const fullCopyText = formatCarouselForCopy(data);
+
+  return (
+    <div className="space-y-5">
+      <OutputHeader
+        title="Carousel Outline"
+        toolId="carousel"
+        meta={meta}
+        copyAllText={fullCopyText}
+      />
+
+      {/* Deck Metadata Summary */}
+      <div className="p-4 rounded-xl bg-devpilot-surface/70 border border-devpilot-border/80 space-y-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-devpilot-text tracking-tight">
+            {data.title}
+          </h3>
+          <div className="flex items-center gap-2 shrink-0">
+            <Badge variant="purple" className="text-[10px] font-mono">
+              {data.slides.length} Slides
+            </Badge>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-devpilot-muted pt-1 border-t border-devpilot-border/40">
+          <div>
+            <span className="text-devpilot-subtle">Topic: </span>
+            <span className="text-devpilot-text font-medium">{data.topic}</span>
+          </div>
+          {data.targetAudience && (
+            <div>
+              <span className="text-devpilot-subtle">Audience: </span>
+              <span className="text-devpilot-text font-medium">{data.targetAudience}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Ordered Slides List */}
+      <div className="space-y-3.5">
+        {data.slides.map((slide) => {
+          const slideCopyText = formatCarouselSlideForCopy(slide);
+
+          // Type-specific badge styles & accent borders
+          let badgeVariant: 'purple' | 'cyan' | 'default' = 'default';
+          let borderClass = 'hover:border-devpilot-borderHover';
+          let typeLabel = slide.slideType;
+
+          if (slide.slideType === 'COVER') {
+            badgeVariant = 'purple';
+            borderClass = 'border-purple-500/30 bg-purple-500/5 hover:border-purple-500/50';
+          } else if (slide.slideType === 'BODY') {
+            badgeVariant = 'cyan';
+            borderClass = 'border-cyan-500/20 bg-cyan-500/5 hover:border-cyan-500/40';
+          } else if (slide.slideType === 'CTA') {
+            badgeVariant = 'default';
+            borderClass = 'border-emerald-500/30 bg-emerald-500/5 hover:border-emerald-500/50';
+          }
+
+          return (
+            <div
+              key={slide.slideNumber}
+              className={cn(
+                'p-4 rounded-xl bg-devpilot-surface/70 border transition-all space-y-3',
+                borderClass
+              )}
+            >
+              {/* Slide Card Header */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="w-5 h-5 rounded-full bg-devpilot-surface border border-devpilot-border text-devpilot-text text-xs font-bold font-mono flex items-center justify-center">
+                    {slide.slideNumber}
+                  </span>
+                  <Badge variant={badgeVariant} className="text-[10px] font-bold tracking-wider">
+                    {typeLabel}
+                  </Badge>
+                  <span className="text-xs font-bold text-devpilot-text">
+                    {slide.title}
+                  </span>
+                </div>
+                <CopyButton
+                  text={slideCopyText}
+                  size="icon"
+                  className="shrink-0 h-7 w-7"
+                  title="Copy this slide"
+                />
+              </div>
+
+              {/* Hook (typically on COVER) */}
+              {slide.hook && (
+                <div className="p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs">
+                  <span className="font-semibold text-purple-300 block mb-0.5">Hook:</span>
+                  <p className="text-devpilot-text leading-relaxed">{slide.hook}</p>
+                </div>
+              )}
+
+              {/* Main Slide Content */}
+              <div className="p-3 rounded-lg bg-devpilot-card border border-devpilot-border/60">
+                <p className="text-xs text-devpilot-text whitespace-pre-line leading-relaxed font-sans">
+                  {slide.content}
+                </p>
+              </div>
+
+              {/* Slide CTA (typically on CTA slide) */}
+              {slide.cta && (
+                <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs">
+                  <span className="font-semibold text-emerald-400 block mb-0.5">Call to Action:</span>
+                  <p className="text-devpilot-text font-medium leading-relaxed">{slide.cta}</p>
+                </div>
+              )}
+
+              {/* Visual Direction / Design Cues */}
+              {slide.visualDirection && (
+                <div className="flex items-start gap-2 p-2 rounded-lg bg-devpilot-bg/60 border border-devpilot-border/40 text-[11px] text-devpilot-subtle">
+                  <Eye className="w-3.5 h-3.5 text-devpilot-cyan shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold text-devpilot-muted">Visual Direction: </span>
+                    <span>{slide.visualDirection}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ==========================================
 // 4. MASTER OUTPUT DISPATCHER
 // ==========================================
@@ -715,6 +860,13 @@ export function AIOutputContainer({
           meta={meta}
           onSaveToDraft={onSaveToDraft ? () => onSaveToDraft() : undefined}
           isDraftSaved={isDraftSaved}
+        />
+      );
+    case 'carousel':
+      return (
+        <CarouselOutputCard
+          data={outputData as CarouselOutput}
+          meta={meta}
         />
       );
     default:

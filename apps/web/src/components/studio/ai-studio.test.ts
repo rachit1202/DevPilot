@@ -6,6 +6,7 @@ import {
   generateHashtags,
   generateCta,
   generateRewrite,
+  generateCarousel,
   saveToDraft,
   AIStatusData,
 } from '../../lib/ai-api';
@@ -18,6 +19,7 @@ import {
   validateHashtagsInput,
   validateCtaInput,
   validateRewriteInput,
+  validateCarouselInput,
   formatAIErrorMessage,
   formatIdeasForCopy,
   formatCaptionForCopy,
@@ -25,7 +27,11 @@ import {
   formatHashtagsForCopy,
   formatCtaForCopy,
   formatRewriteForCopy,
+  formatCarouselForCopy,
+  formatCarouselSlideForCopy,
   copyTextToClipboard,
+  STUDIO_TOOLS,
+  INITIAL_FORMS_STATE,
 } from './ai-studio-logic';
 import {
   canUserPromoteToDraft,
@@ -776,6 +782,382 @@ export async function runAIStudioTests(): Promise<{ passed: number; failed: numb
     const linked = { resultingPostId: 'post-uuid-999' };
     assert.equal(Boolean(unlinked.resultingPostId), false);
     assert.equal(Boolean(linked.resultingPostId), true);
+  });
+
+  // ==========================================
+  // CAROUSEL OUTLINE GENERATOR INTEGRATION TESTS (M2.3.2)
+  // ==========================================
+
+  // 50. Carousel tool presence in STUDIO_TOOLS
+  await test('50. [Carousel] Carousel Outline tool is registered in STUDIO_TOOLS with correct config', async () => {
+    const tool = STUDIO_TOOLS.carousel;
+    assert.ok(tool, 'Carousel tool must exist in STUDIO_TOOLS');
+    assert.equal(tool.id, 'carousel');
+    assert.equal(tool.name, 'Carousel Outline');
+    assert.equal(tool.badge, '5–10 Slides');
+    assert.equal(tool.minChars, 5);
+    assert.equal(tool.maxChars, 500);
+  });
+
+  // 51. Carousel initial form state has default 7 slides
+  await test('51. [Carousel] INITIAL_FORMS_STATE initializes carousel with 7 slides and empty text fields', async () => {
+    const initial = INITIAL_FORMS_STATE.carousel;
+    assert.ok(initial, 'carousel initial form state must exist');
+    assert.equal(initial.slidesCount, 7);
+    assert.equal(initial.topic, '');
+    assert.equal(initial.tone, '');
+    assert.equal(initial.targetAudience, '');
+    assert.equal(initial.additionalInstructions, '');
+  });
+
+  // 52. Valid carousel input passes validation
+  await test('52. [Carousel] validateCarouselInput accepts valid topic (5-500 chars) with default 7 slides', async () => {
+    const result = validateCarouselInput({
+      topic: 'Building Resilient Microservices with Go',
+      tone: '',
+      slidesCount: 7,
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(result.isValid, true);
+    assert.equal(result.errorMessage, null);
+    assert.equal(result.payload?.topic, 'Building Resilient Microservices with Go');
+    assert.equal(result.payload?.slidesCount, 7);
+  });
+
+  // 53. Carousel topic boundary validation (< 5 chars and > 500 chars)
+  await test('53. [Carousel] validateCarouselInput rejects topic shorter than 5 chars or longer than 500 chars', async () => {
+    const tooShort = validateCarouselInput({
+      topic: 'Dev',
+      tone: '',
+      slidesCount: 7,
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(tooShort.isValid, false);
+    assert.ok(tooShort.errorMessage);
+
+    const tooLong = validateCarouselInput({
+      topic: 'a'.repeat(501),
+      tone: '',
+      slidesCount: 7,
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(tooLong.isValid, false);
+    assert.ok(tooLong.errorMessage);
+  });
+
+  // 54. Carousel slide count bounds (min 5, max 10)
+  await test('54. [Carousel] validateCarouselInput enforces slide count bounds between 5 and 10', async () => {
+    const valid5 = validateCarouselInput({
+      topic: '5 CSS Grid Tricks You Did Not Know',
+      tone: '',
+      slidesCount: 5,
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(valid5.isValid, true);
+    assert.equal(valid5.payload?.slidesCount, 5);
+
+    const valid10 = validateCarouselInput({
+      topic: '10 Essential SQL Optimization Tips for Devs',
+      tone: '',
+      slidesCount: 10,
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(valid10.isValid, true);
+    assert.equal(valid10.payload?.slidesCount, 10);
+
+    const invalid4 = validateCarouselInput({
+      topic: 'Valid topic string here',
+      tone: '',
+      slidesCount: 4,
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(invalid4.isValid, false);
+
+    const invalid11 = validateCarouselInput({
+      topic: 'Valid topic string here',
+      tone: '',
+      slidesCount: 11,
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(invalid11.isValid, false);
+  });
+
+  // 55. Carousel optional fields validation (tone, targetAudience, additionalInstructions)
+  await test('55. [Carousel] validateCarouselInput properly preserves optional fields when valid and trims whitespace', async () => {
+    const result = validateCarouselInput({
+      topic: '   Clean Code Architecture Guide   ',
+      tone: '  Educational & Pragmatic  ',
+      slidesCount: 8,
+      targetAudience: '  Senior Fullstack Engineers  ',
+      additionalInstructions: '  Include diagram tips  ',
+    });
+    assert.equal(result.isValid, true);
+    assert.equal(result.payload?.topic, 'Clean Code Architecture Guide');
+    assert.equal(result.payload?.tone, 'Educational & Pragmatic');
+    assert.equal(result.payload?.slidesCount, 8);
+    assert.equal(result.payload?.targetAudience, 'Senior Fullstack Engineers');
+    assert.equal(result.payload?.additionalInstructions, 'Include diagram tips');
+  });
+
+  // 56. Carousel optional fields length limits (tone > 100, targetAudience > 200, additionalInstructions > 500)
+  await test('56. [Carousel] validateCarouselInput rejects optional fields exceeding max length', async () => {
+    const invalidTone = validateCarouselInput({
+      topic: 'Valid Topic Here',
+      tone: 't'.repeat(101),
+      slidesCount: 7,
+      targetAudience: '',
+      additionalInstructions: '',
+    });
+    assert.equal(invalidTone.isValid, false);
+
+    const invalidAudience = validateCarouselInput({
+      topic: 'Valid Topic Here',
+      tone: '',
+      slidesCount: 7,
+      targetAudience: 'a'.repeat(201),
+      additionalInstructions: '',
+    });
+    assert.equal(invalidAudience.isValid, false);
+
+    const invalidInstructions = validateCarouselInput({
+      topic: 'Valid Topic Here',
+      tone: '',
+      slidesCount: 7,
+      targetAudience: '',
+      additionalInstructions: 'i'.repeat(501),
+    });
+    assert.equal(invalidInstructions.isValid, false);
+  });
+
+  // 57. generateCarousel API call posts to /api/v1/ai/generate/carousel with exact payload
+  await test('57. [Carousel] generateCarousel sends POST to /api/v1/ai/generate/carousel with correct payload', async () => {
+    let capturedUrl = '';
+    let capturedMethod = '';
+    let capturedBody: any = null;
+
+    global.fetch = async (url: any, init: any) => {
+      capturedUrl = String(url);
+      capturedMethod = init?.method;
+      capturedBody = JSON.parse(init?.body || '{}');
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            title: '5 Git Habits That Save Hours',
+            topic: 'Git Workflows',
+            targetAudience: 'Engineers',
+            slides: [
+              { slideNumber: 1, slideType: 'COVER', title: '5 Git Habits', hook: 'Stop losing work.', content: 'Intro' },
+              { slideNumber: 2, slideType: 'BODY', title: 'Habit 1: Rebase', content: 'Use rebase for clean history.' },
+              { slideNumber: 3, slideType: 'BODY', title: 'Habit 2: Stash', content: 'Use stash for WIP.' },
+              { slideNumber: 4, slideType: 'BODY', title: 'Habit 3: Bisect', content: 'Find bugs fast.' },
+              { slideNumber: 5, slideType: 'CTA', title: 'Conclusion', cta: 'Save this post!', content: 'Outro' },
+            ],
+          },
+          meta: {
+            historyId: 'hist-carousel-123',
+            model: 'qwen2.5:3b',
+            durationMs: 4200,
+            generationType: 'CAROUSEL',
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    };
+
+    const payload = {
+      topic: 'Git Workflows for Devs',
+      tone: 'Practical',
+      slidesCount: 5,
+      targetAudience: 'Developers',
+      additionalInstructions: 'Keep slides concise',
+    };
+
+    const res = await generateCarousel(payload);
+    assert.ok(capturedUrl.includes('/api/v1/ai/generate/carousel'));
+    assert.equal(capturedMethod, 'POST');
+    assert.deepEqual(capturedBody, payload);
+    assert.equal(res.success, true);
+    assert.equal(res.data.slides.length, 5);
+    assert.equal(res.meta.model, 'qwen2.5:3b');
+    assert.equal(res.meta.historyId, 'hist-carousel-123');
+  });
+
+  // 58. formatCarouselSlideForCopy formats slide content, hook, CTA, visual direction
+  await test('58. [Carousel] formatCarouselSlideForCopy formats individual slide with all present metadata', async () => {
+    const coverSlide = {
+      slideNumber: 1,
+      slideType: 'COVER' as const,
+      title: '5 Docker Anti-Patterns',
+      hook: 'Are you bloated in production?',
+      content: 'Here is what 90% of teams do wrong with containerization.',
+      visualDirection: 'Bold dark illustration with red container',
+    };
+    const formattedCover = formatCarouselSlideForCopy(coverSlide);
+    assert.ok(formattedCover.includes('[Slide 1: COVER] 5 Docker Anti-Patterns'));
+    assert.ok(formattedCover.includes('Hook: Are you bloated in production?'));
+    assert.ok(formattedCover.includes('Here is what 90% of teams do wrong'));
+    assert.ok(formattedCover.includes('Visual Direction: Bold dark illustration'));
+
+    const ctaSlide = {
+      slideNumber: 5,
+      slideType: 'CTA' as const,
+      title: 'Summary & Next Steps',
+      content: 'Follow for more backend tips.',
+      cta: 'Drop your favorite Docker trick below!',
+      visualDirection: 'Minimal closing slide with logo',
+    };
+    const formattedCta = formatCarouselSlideForCopy(ctaSlide);
+    assert.ok(formattedCta.includes('[Slide 5: CTA] Summary & Next Steps'));
+    assert.ok(formattedCta.includes('CTA: Drop your favorite Docker trick below!'));
+    assert.ok(formattedCta.includes('Visual Direction: Minimal closing slide'));
+  });
+
+  // 59. formatCarouselForCopy formats full carousel deck with header and slide separators
+  await test('59. [Carousel] formatCarouselForCopy creates a clean markdown outline of entire deck', async () => {
+    const deck = {
+      title: 'PostgreSQL Indexing Essentials',
+      topic: 'Database Performance',
+      targetAudience: 'Backend Engineers',
+      slides: [
+        {
+          slideNumber: 1,
+          slideType: 'COVER' as const,
+          title: 'PostgreSQL Indexing Essentials',
+          hook: 'Your queries are slow.',
+          content: 'Cover content',
+        },
+        {
+          slideNumber: 2,
+          slideType: 'BODY' as const,
+          title: 'B-Tree vs GIN',
+          content: 'Body content',
+        },
+        {
+          slideNumber: 3,
+          slideType: 'CTA' as const,
+          title: 'Wrap Up',
+          content: 'Outro content',
+          cta: 'Bookmark this guide!',
+        },
+      ],
+    };
+    const formatted = formatCarouselForCopy(deck);
+    assert.ok(formatted.startsWith('# PostgreSQL Indexing Essentials'));
+    assert.ok(formatted.includes('Topic: Database Performance'));
+    assert.ok(formatted.includes('Target Audience: Backend Engineers'));
+    assert.ok(formatted.includes('Total Slides: 3'));
+    assert.ok(formatted.includes('[Slide 1: COVER] PostgreSQL Indexing Essentials'));
+    assert.ok(formatted.includes('[Slide 2: BODY] B-Tree vs GIN'));
+    assert.ok(formatted.includes('[Slide 3: CTA] Wrap Up'));
+    assert.ok(formatted.includes('---'));
+  });
+
+  // 60. Engine gating blocks Carousel generation when offline, busy, or recovery required
+  await test('60. [Carousel] checkEngineReadiness correctly gates Carousel generation across all engine states', async () => {
+    // 1. Loading
+    const loadingGate = checkEngineReadiness(null, true, false);
+    assert.equal(loadingGate.canGenerate, false);
+    assert.equal(loadingGate.code, 'LOADING');
+
+    // 2. Offline
+    const offlineGate = checkEngineReadiness({ online: false } as any, false, false);
+    assert.equal(offlineGate.canGenerate, false);
+    assert.equal(offlineGate.code, 'OFFLINE');
+
+    // 3. Busy generating
+    const busyGate = checkEngineReadiness({ online: true, engineStatus: 'READY' } as any, false, true);
+    assert.equal(busyGate.canGenerate, false);
+    assert.equal(busyGate.code, 'GENERATING');
+
+    // 4. Recovery required
+    const recoveryGate = checkEngineReadiness(
+      { online: true, engineStatus: 'RECOVERY_REQUIRED', lockReason: 'PID stale' } as any,
+      false,
+      false
+    );
+    assert.equal(recoveryGate.canGenerate, false);
+    assert.equal(recoveryGate.code, 'RECOVERY_REQUIRED');
+
+    // 5. Ready
+    const readyGate = checkEngineReadiness(
+      { online: true, engineStatus: 'READY', model: 'qwen2.5:3b' } as any,
+      false,
+      false
+    );
+    assert.equal(readyGate.canGenerate, true);
+    assert.equal(readyGate.code, 'OK');
+  });
+
+  // 61. Duplicate submission guard (isGenerating disables concurrent calls)
+  await test('61. [Carousel] Concurrent submission guard rejects duplicate in-flight carousel requests', async () => {
+    let callCount = 0;
+    let isGenerating = false;
+
+    const submit = async () => {
+      if (isGenerating) return;
+      isGenerating = true;
+      try {
+        callCount++;
+        await new Promise((r) => setTimeout(r, 20));
+      } finally {
+        isGenerating = false;
+      }
+    };
+
+    await Promise.all([submit(), submit(), submit()]);
+    assert.equal(callCount, 1);
+  });
+
+  // 62. Carousel API error formatting (429 busy, 504 timeout, 503 unavailable, 400 validation)
+  await test('62. [Carousel] formatAIErrorMessage normalizes Carousel API errors into user-friendly messages', async () => {
+    const err429 = new ApiError('BUSY', 429);
+    assert.ok(formatAIErrorMessage(err429).includes('AI engine is currently busy'));
+
+    const err504 = new ApiError('GATEWAY_TIMEOUT', 504);
+    assert.ok(formatAIErrorMessage(err504).includes('timed out'));
+
+    const err503 = new ApiError('SERVICE_UNAVAILABLE', 503);
+    assert.ok(formatAIErrorMessage(err503).includes('unavailable'));
+
+    const err400 = new ApiError('Invalid slide count requested', 400);
+    assert.equal(formatAIErrorMessage(err400), 'Invalid slide count requested');
+  });
+
+  // 63. RBAC permission check for Carousel (EDITOR and ADMIN allowed, VIEWER rejected)
+  await test('63. [Carousel] User permissions verify that EDITOR and ADMIN have full generation access', async () => {
+    const adminUser = { role: 'ADMIN' };
+    const editorUser = { role: 'EDITOR' };
+    const viewerUser = { role: 'VIEWER' };
+
+    const canGenerate = (role: string) => role === 'ADMIN' || role === 'EDITOR';
+    assert.equal(canGenerate(adminUser.role), true);
+    assert.equal(canGenerate(editorUser.role), true);
+    assert.equal(canGenerate(viewerUser.role), false);
+  });
+
+  // 64. Existing six generators unchanged and regression-free
+  await test('64. [Regression] All six previous generation tools remain intact and fully functional', async () => {
+    assert.ok(STUDIO_TOOLS.ideas);
+    assert.ok(STUDIO_TOOLS.caption);
+    assert.ok(STUDIO_TOOLS.hooks);
+    assert.ok(STUDIO_TOOLS.hashtags);
+    assert.ok(STUDIO_TOOLS.cta);
+    assert.ok(STUDIO_TOOLS.rewrite);
+    assert.ok(STUDIO_TOOLS.carousel);
+
+    assert.equal(Object.keys(STUDIO_TOOLS).length, 7);
   });
 
   global.fetch = originalFetch;

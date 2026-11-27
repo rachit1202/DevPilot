@@ -6,6 +6,7 @@ import {
   GenerateHashtagsInput,
   GenerateCtaInput,
   GenerateRewriteInput,
+  GenerateCarouselInput,
   SaveToDraftInput,
   IdeasOutput,
   CaptionOutput,
@@ -13,6 +14,7 @@ import {
   HashtagsOutput,
   CtaOutput,
   RewriteOutput,
+  CarouselOutput,
 } from '@devpilot/validation';
 import { ContentType, ContentCategory, PostStatus } from '@devpilot/shared';
 
@@ -59,6 +61,7 @@ export type HooksGenerationResponse = AIGenerationResponse<HooksOutput>;
 export type HashtagsGenerationResponse = AIGenerationResponse<HashtagsOutput>;
 export type CtaGenerationResponse = AIGenerationResponse<CtaOutput>;
 export type RewriteGenerationResponse = AIGenerationResponse<RewriteOutput>;
+export type CarouselGenerationResponse = AIGenerationResponse<CarouselOutput>;
 
 // ==========================================
 // 3. GENERATION HISTORY TYPES
@@ -211,6 +214,16 @@ export async function generateCta(payload: GenerateCtaInput): Promise<CtaGenerat
  */
 export async function generateRewrite(payload: GenerateRewriteInput): Promise<RewriteGenerationResponse> {
   return apiRequest<RewriteGenerationResponse>('/ai/generate/rewrite', {
+    method: 'POST',
+    data: payload,
+  });
+}
+
+/**
+ * Generates an outline for a carousel deck (5-10 slides).
+ */
+export async function generateCarousel(payload: GenerateCarouselInput): Promise<CarouselGenerationResponse> {
+  return apiRequest<CarouselGenerationResponse>('/ai/generate/carousel', {
     method: 'POST',
     data: payload,
   });

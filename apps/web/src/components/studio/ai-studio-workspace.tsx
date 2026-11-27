@@ -8,6 +8,7 @@ import {
   generateHashtags,
   generateCta,
   generateRewrite,
+  generateCarousel,
   AIStatusData,
   AIGenerationMeta,
 } from '@/lib/ai-api';
@@ -23,6 +24,7 @@ import {
   validateHashtagsInput,
   validateCtaInput,
   validateRewriteInput,
+  validateCarouselInput,
   formatAIErrorMessage,
 } from './ai-studio-logic';
 import { AIOutputContainer } from './ai-output-cards';
@@ -42,6 +44,7 @@ import {
   AlertCircle,
   RotateCcw,
   Info,
+  Layers,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -67,6 +70,7 @@ export function AIStudioWorkspace({
   const [activeTool, setActiveTool] = useState<StudioToolId>('ideas');
   const [formsState, setFormsState] = useState<StudioFormsState>(INITIAL_FORMS_STATE);
   const [outputsState, setOutputsState] = useState<Record<StudioToolId, ToolOutputEntry | null>>({
+    carousel: null,
     ideas: null,
     caption: null,
     hooks: null,
@@ -96,6 +100,8 @@ export function AIStudioWorkspace({
 
   const validation = useMemo(() => {
     switch (activeTool) {
+      case 'carousel':
+        return validateCarouselInput(formsState.carousel);
       case 'ideas':
         return validateIdeasInput(formsState.ideas);
       case 'caption':
@@ -114,6 +120,8 @@ export function AIStudioWorkspace({
   // Current primary text character count
   const currentTextLength = useMemo(() => {
     switch (activeTool) {
+      case 'carousel':
+        return formsState.carousel.topic.length;
       case 'ideas':
         return formsState.ideas.topic.length;
       case 'caption':
@@ -145,6 +153,9 @@ export function AIStudioWorkspace({
       let res: any = null;
 
       switch (activeTool) {
+        case 'carousel':
+          res = await generateCarousel(validation.payload as any);
+          break;
         case 'ideas':
           res = await generateIdeas(validation.payload as any);
           break;
@@ -199,6 +210,8 @@ export function AIStudioWorkspace({
   const renderToolIcon = (id: StudioToolId, isActive: boolean) => {
     const iconClass = cn('w-4 h-4', isActive ? 'text-devpilot-purple' : 'text-devpilot-muted');
     switch (id) {
+      case 'carousel':
+        return <Layers className={iconClass} />;
       case 'ideas':
         return <Lightbulb className={iconClass} />;
       case 'caption':
@@ -272,6 +285,178 @@ export function AIStudioWorkspace({
             </div>
 
             {/* Tool-specific form fields */}
+            {activeTool === 'carousel' && (
+              <>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <label className="font-semibold text-devpilot-text">
+                      Topic or Concept *
+                    </label>
+                    <span
+                      className={cn(
+                        'text-[11px] font-mono',
+                        currentTextLength > currentConfig.maxChars || (currentTextLength > 0 && currentTextLength < currentConfig.minChars)
+                          ? 'text-rose-400 font-bold'
+                          : 'text-devpilot-subtle'
+                      )}
+                    >
+                      {currentTextLength}/{currentConfig.maxChars}
+                    </span>
+                  </div>
+                  <textarea
+                    value={formsState.carousel.topic}
+                    onChange={(e) =>
+                      setFormsState((prev) => ({
+                        ...prev,
+                        carousel: { ...prev.carousel, topic: e.target.value },
+                      }))
+                    }
+                    placeholder={currentConfig.inputPlaceholder}
+                    rows={3}
+                    className="w-full rounded-lg bg-devpilot-bg border border-devpilot-border p-3 text-xs text-devpilot-text placeholder:text-devpilot-subtle focus:outline-none focus:border-devpilot-purple resize-y font-sans"
+                    disabled={isGenerating}
+                  />
+                  {currentTextLength > 0 && currentTextLength < currentConfig.minChars && (
+                    <p className="text-[11px] text-rose-400">
+                      Topic must be at least {currentConfig.minChars} characters.
+                    </p>
+                  )}
+                </div>
+
+                {/* Tone of Voice */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-devpilot-text">
+                    Tone of Voice <span className="text-devpilot-subtle font-normal">(Optional, max 100)</span>
+                  </label>
+                  <Input
+                    value={formsState.carousel.tone}
+                    onChange={(e) =>
+                      setFormsState((prev) => ({
+                        ...prev,
+                        carousel: { ...prev.carousel, tone: e.target.value },
+                      }))
+                    }
+                    placeholder="e.g. Authoritative, educational, punchy..."
+                    className="h-9 text-xs"
+                    disabled={isGenerating}
+                    maxLength={100}
+                  />
+                </div>
+
+                {/* Number of Slides (5–10, default 7) */}
+                <div className="space-y-2 p-3 rounded-lg bg-devpilot-surface/60 border border-devpilot-border/60">
+                  <div className="flex items-center justify-between text-xs">
+                    <label className="font-semibold text-devpilot-text flex items-center gap-2">
+                      <span>Number of Slides</span>
+                      <Badge variant="purple" className="text-[10px] font-mono px-1.5 py-0">
+                        {formsState.carousel.slidesCount} Slides
+                      </Badge>
+                    </label>
+                    <span className="text-[11px] text-devpilot-subtle">Range: 5 to 10</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={5}
+                      max={10}
+                      step={1}
+                      value={formsState.carousel.slidesCount}
+                      onChange={(e) =>
+                        setFormsState((prev) => ({
+                          ...prev,
+                          carousel: {
+                            ...prev.carousel,
+                            slidesCount: Number(e.target.value),
+                          },
+                        }))
+                      }
+                      className="w-full accent-devpilot-purple cursor-pointer h-2 bg-devpilot-bg rounded-lg"
+                      disabled={isGenerating}
+                    />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 text-xs font-mono"
+                        disabled={isGenerating || formsState.carousel.slidesCount <= 5}
+                        onClick={() =>
+                          setFormsState((prev) => ({
+                            ...prev,
+                            carousel: {
+                              ...prev.carousel,
+                              slidesCount: Math.max(5, prev.carousel.slidesCount - 1),
+                            },
+                          }))
+                        }
+                      >
+                        -
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 text-xs font-mono"
+                        disabled={isGenerating || formsState.carousel.slidesCount >= 10}
+                        onClick={() =>
+                          setFormsState((prev) => ({
+                            ...prev,
+                            carousel: {
+                              ...prev.carousel,
+                              slidesCount: Math.min(10, prev.carousel.slidesCount + 1),
+                            },
+                          }))
+                        }
+                      >
+                        +
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Target Audience */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-devpilot-text">
+                    Target Audience <span className="text-devpilot-subtle font-normal">(Optional, max 200)</span>
+                  </label>
+                  <Input
+                    value={formsState.carousel.targetAudience}
+                    onChange={(e) =>
+                      setFormsState((prev) => ({
+                        ...prev,
+                        carousel: { ...prev.carousel, targetAudience: e.target.value },
+                      }))
+                    }
+                    placeholder="e.g. Junior to Mid-level TypeScript Developers..."
+                    className="h-9 text-xs"
+                    disabled={isGenerating}
+                    maxLength={200}
+                  />
+                </div>
+
+                {/* Additional Instructions */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-devpilot-text">
+                    Additional Instructions <span className="text-devpilot-subtle font-normal">(Optional, max 500)</span>
+                  </label>
+                  <textarea
+                    value={formsState.carousel.additionalInstructions}
+                    onChange={(e) =>
+                      setFormsState((prev) => ({
+                        ...prev,
+                        carousel: { ...prev.carousel, additionalInstructions: e.target.value },
+                      }))
+                    }
+                    placeholder="e.g. Focus on practical pitfalls and include code pseudocode cues in visual directions..."
+                    rows={2}
+                    className="w-full rounded-lg bg-devpilot-bg border border-devpilot-border p-3 text-xs text-devpilot-text placeholder:text-devpilot-subtle focus:outline-none focus:border-devpilot-purple resize-y font-sans"
+                    disabled={isGenerating}
+                    maxLength={500}
+                  />
+                </div>
+              </>
+            )}
+
             {activeTool === 'ideas' && (
               <>
                 <div className="space-y-1.5">

@@ -5,18 +5,22 @@ import {
   generateHashtagsInputSchema,
   generateCtaInputSchema,
   generateRewriteInputSchema,
+  generateCarouselInputSchema,
   GenerateIdeasInput,
   GenerateCaptionInput,
   GenerateHooksInput,
   GenerateHashtagsInput,
   GenerateCtaInput,
   GenerateRewriteInput,
+  GenerateCarouselInput,
   IdeasOutput,
   CaptionOutput,
   HooksOutput,
   HashtagsOutput,
   CtaOutput,
   RewriteOutput,
+  CarouselOutput,
+  CarouselSlide,
 } from '@devpilot/validation';
 import { AIStatusData } from '../../lib/ai-api';
 import { ApiError } from '../../lib/api';
@@ -25,7 +29,7 @@ import { ApiError } from '../../lib/api';
 // 1. TOOL IDENTIFIERS & TYPES
 // ==========================================
 
-export type StudioToolId = 'ideas' | 'caption' | 'hooks' | 'hashtags' | 'cta' | 'rewrite';
+export type StudioToolId = 'ideas' | 'caption' | 'hooks' | 'hashtags' | 'cta' | 'rewrite' | 'carousel';
 
 export interface StudioToolConfig {
   id: StudioToolId;
@@ -39,6 +43,16 @@ export interface StudioToolConfig {
 }
 
 export const STUDIO_TOOLS: Record<StudioToolId, StudioToolConfig> = {
+  carousel: {
+    id: 'carousel',
+    name: 'Carousel Outline',
+    badge: '5–10 Slides',
+    description: 'Generate complete slide-by-slide carousel outlines with cover, body, CTA, and visual cues.',
+    inputLabel: 'Topic or Concept',
+    inputPlaceholder: 'e.g. 5 system design patterns every senior engineer should know...',
+    minChars: 5,
+    maxChars: 500,
+  },
   ideas: {
     id: 'ideas',
     name: 'Content Ideas',
@@ -137,6 +151,14 @@ export interface RewriteFormState {
   targetTone: string;
 }
 
+export interface CarouselFormState {
+  topic: string;
+  tone: string;
+  slidesCount: number;
+  targetAudience: string;
+  additionalInstructions: string;
+}
+
 export interface StudioFormsState {
   ideas: IdeasFormState;
   caption: CaptionFormState;
@@ -144,9 +166,17 @@ export interface StudioFormsState {
   hashtags: HashtagsFormState;
   cta: CtaFormState;
   rewrite: RewriteFormState;
+  carousel: CarouselFormState;
 }
 
 export const INITIAL_FORMS_STATE: StudioFormsState = {
+  carousel: {
+    topic: '',
+    tone: '',
+    slidesCount: 7,
+    targetAudience: '',
+    additionalInstructions: '',
+  },
   ideas: {
     topic: '',
     targetAudience: '',
@@ -371,6 +401,32 @@ export function validateRewriteInput(form: RewriteFormState): ToolValidationResu
   return { isValid: true, errorMessage: null, payload: parsed.data };
 }
 
+export function validateCarouselInput(form: CarouselFormState): ToolValidationResult<GenerateCarouselInput> {
+  const raw: Record<string, unknown> = {
+    topic: form.topic.trim(),
+    slidesCount: typeof form.slidesCount === 'number' ? form.slidesCount : Number(form.slidesCount) || 7,
+  };
+  if (form.tone.trim()) {
+    raw.tone = form.tone.trim();
+  }
+  if (form.targetAudience.trim()) {
+    raw.targetAudience = form.targetAudience.trim();
+  }
+  if (form.additionalInstructions.trim()) {
+    raw.additionalInstructions = form.additionalInstructions.trim();
+  }
+
+  const parsed = generateCarouselInputSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      isValid: false,
+      errorMessage: parsed.error.issues[0]?.message || 'Invalid Carousel input.',
+      payload: null,
+    };
+  }
+  return { isValid: true, errorMessage: null, payload: parsed.data };
+}
+
 // ==========================================
 // 5. ERROR MESSAGE NORMALIZATION
 // ==========================================
@@ -444,6 +500,34 @@ export function formatCtaForCopy(data: CtaOutput): string {
 
 export function formatRewriteForCopy(data: RewriteOutput): string {
   return data.rewrittenText;
+}
+
+export function formatCarouselSlideForCopy(slide: CarouselSlide): string {
+  const parts: string[] = [
+    `[Slide ${slide.slideNumber}: ${slide.slideType}] ${slide.title}`,
+    slide.content,
+  ];
+  if (slide.hook) {
+    parts.push(`Hook: ${slide.hook}`);
+  }
+  if (slide.cta) {
+    parts.push(`CTA: ${slide.cta}`);
+  }
+  if (slide.visualDirection) {
+    parts.push(`Visual Direction: ${slide.visualDirection}`);
+  }
+  return parts.join('\n');
+}
+
+export function formatCarouselForCopy(data: CarouselOutput): string {
+  const headerParts: string[] = [`# ${data.title}`, `Topic: ${data.topic}`];
+  if (data.targetAudience) {
+    headerParts.push(`Target Audience: ${data.targetAudience}`);
+  }
+  headerParts.push(`Total Slides: ${data.slides.length}`);
+
+  const slidesFormatted = data.slides.map(formatCarouselSlideForCopy).join('\n\n---\n\n');
+  return `${headerParts.join('\n')}\n\n---\n\n${slidesFormatted}`;
 }
 
 // ==========================================
