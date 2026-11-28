@@ -15,13 +15,18 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().default(120),
   OLLAMA_BASE_URL: z.string().url().default('http://127.0.0.1:11434'),
   OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
-  OLLAMA_FALLBACK_MODEL: z.string().default('qwen2.5:1.5b'),
   OLLAMA_TIMEOUT_MS: z.coerce
     .number()
     .int('OLLAMA_TIMEOUT_MS must be an integer')
     .min(60000, 'OLLAMA_TIMEOUT_MS must be at least 60000 (1 minute)')
     .max(300000, 'OLLAMA_TIMEOUT_MS cannot exceed 300000 (5 minutes)')
     .default(120000),
+  AI_LOCK_PORT: z.coerce
+    .number()
+    .int('AI_LOCK_PORT must be an integer')
+    .min(1, 'AI_LOCK_PORT must be at least 1')
+    .max(65535, 'AI_LOCK_PORT cannot exceed 65535')
+    .default(54321),
 });
 
 const parsed = envSchema.safeParse(process.env);

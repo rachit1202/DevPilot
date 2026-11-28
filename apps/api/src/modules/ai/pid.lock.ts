@@ -1,116 +1,125 @@
-import fs from 'fs';
+import net from 'net';
 import crypto from 'crypto';
-import { AI_PID_LOCK_PATH, initializeStorageDir } from './storage.util';
+import { config } from '../../config/env';
 
 export interface PidLockPayload {
   pid: number;
   ownerToken: string;
   startedAt: string;
+  port: number;
 }
 
 /**
- * Cooperative PID Lock for Single-Process AI Engine Ownership.
- * Uses atomic exclusive file creation ('wx').
+ * Kernel-Backed AI Process Ownership Manager.
  *
- * NOTE: On Windows (NTFS), an open file handle from open('wx') does not enforce an
- * OS-level mandatory delete-lock. It is strictly an atomic cooperative lock among
- * DevPilot processes. Manual external deletion while the owner runs will break
- * cooperative guarantees.
+ * Guarantees exclusive process ownership across DevPilot API processes using an
+ * operating-system-held loopback TCP socket (127.0.0.1:AI_LOCK_PORT).
+ *
+ * Key guarantees:
+ * 1. Hardware/OS mutual exclusion: The OS kernel enforces single-listener semantics
+ *    on bind(). If another process holds the port, bind immediately fails with EADDRINUSE.
+ * 2. Instant kernel crash teardown: When a process exits or is killed abruptly
+ *    (SIGKILL, taskkill, TerminateProcess), the OS kernel automatically closes the
+ *    socket handle and frees the port. No stale lock files can ever persist.
+ * 3. Zero filesystem TOCTOU races: Ownership is strictly mediated by the kernel network stack.
  */
 export class PidLockManager {
-  private static lockHandle: fs.promises.FileHandle | null = null;
+  private static server: net.Server | null = null;
   private static ownerToken: string | null = null;
   private static isOwner = false;
+  private static bindingPromise: Promise<{ acquired: boolean; reason?: string; existingOwner?: PidLockPayload }> | null = null;
 
   /**
-   * Attempts to claim exclusive cooperative ownership of the AI engine.
-   * Returns true if claimed, false if another process or stale lock exists.
+   * Attempts to claim exclusive ownership of the AI engine via loopback socket bind.
+   * Returns true if successfully bound, false if another process holds the port or on bind failure.
    */
-  static async acquireOwnership(): Promise<{ acquired: boolean; reason?: string; existingOwner?: PidLockPayload }> {
-    await initializeStorageDir();
-
-    const token = crypto.randomUUID();
-    const payload: PidLockPayload = {
-      pid: process.pid,
-      ownerToken: token,
-      startedAt: new Date().toISOString(),
-    };
-
-    try {
-      // Atomic exclusive creation flag 'wx'
-      const handle = await fs.promises.open(AI_PID_LOCK_PATH, 'wx');
-      await handle.writeFile(JSON.stringify(payload, null, 2), 'utf8');
-      await handle.sync();
-
-      this.lockHandle = handle;
-      this.ownerToken = token;
-      this.isOwner = true;
-
+  static async acquireOwnership(customPort?: number): Promise<{ acquired: boolean; reason?: string; existingOwner?: PidLockPayload }> {
+    // If this process already owns the socket, return true idempotently
+    if (this.isOwner && this.server) {
       return { acquired: true };
-    } catch (err: any) {
-      if (err.code === 'EEXIST' || err.code === 'EPERM' || err.code === 'EBUSY') {
-        // Stale or active lock exists. Read diagnostic info if available.
-        let existing: PidLockPayload | undefined;
-        try {
-          const raw = await fs.promises.readFile(AI_PID_LOCK_PATH, 'utf8');
-          existing = JSON.parse(raw);
-        } catch {
-          // Unreadable or corrupted existing lock
-        }
-        return {
-          acquired: false,
-          reason: 'AI_ENGINE_OWNED_BY_ANOTHER_PROCESS',
-          existingOwner: existing,
-        };
-      }
-      throw err;
+    }
+
+    // Serialize concurrent acquire calls within the same process
+    if (this.bindingPromise) {
+      return this.bindingPromise;
+    }
+
+    this.bindingPromise = this.bindSocket(customPort || config.AI_LOCK_PORT);
+    try {
+      return await this.bindingPromise;
+    } finally {
+      this.bindingPromise = null;
     }
   }
 
+  private static bindSocket(port: number): Promise<{ acquired: boolean; reason?: string; existingOwner?: PidLockPayload }> {
+    return new Promise((resolve) => {
+      const token = crypto.randomUUID();
+      const server = net.createServer();
+
+      // Ensure errors on active server after bind are safely handled
+      server.on('error', (err: any) => {
+        if (!this.isOwner) {
+          // Error occurred before listening callback
+          if (err.code === 'EADDRINUSE') {
+            resolve({
+              acquired: false,
+              reason: 'AI_ENGINE_OWNED_BY_ANOTHER_PROCESS',
+            });
+          } else {
+            resolve({
+              acquired: false,
+              reason: `SOCKET_BIND_FAILED: ${err.code || err.message}`,
+            });
+          }
+        }
+      });
+
+      // Bind exclusively to IPv4 loopback 127.0.0.1
+      server.listen(port, '127.0.0.1', () => {
+        this.server = server;
+        this.ownerToken = token;
+        this.isOwner = true;
+
+        resolve({ acquired: true });
+      });
+    });
+  }
+
   /**
-   * Checks whether this process currently owns the cooperative PID lock.
+   * Checks whether this process currently holds exclusive kernel socket ownership.
    */
   static isEngineOwner(): boolean {
     return this.isOwner;
   }
 
   /**
-   * Releases the cooperative lock during graceful shutdown.
-   * Verifies ownerToken before unlinking to prevent removing another process's lock.
+   * Returns the current in-process owner token, if owned.
+   */
+  static getOwnerToken(): string | null {
+    return this.ownerToken;
+  }
+
+  /**
+   * Releases exclusive ownership by closing the loopback server.
+   * Waits for the server close callback before completing.
    */
   static async releaseOwnership(): Promise<void> {
-    if (!this.isOwner || !this.ownerToken) {
+    if (!this.server) {
+      this.isOwner = false;
+      this.ownerToken = null;
       return;
     }
 
-    try {
-      // Verify token in file before unlinking
-      let canUnlink = false;
-      try {
-        const raw = await fs.promises.readFile(AI_PID_LOCK_PATH, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (parsed.ownerToken === this.ownerToken) {
-          canUnlink = true;
-        }
-      } catch {
-        // File may have been unlinked or corrupted externally
-      }
+    const s = this.server;
+    this.server = null;
+    this.isOwner = false;
+    this.ownerToken = null;
 
-      if (this.lockHandle) {
-        try {
-          await this.lockHandle.close();
-        } catch {}
-        this.lockHandle = null;
-      }
-
-      if (canUnlink) {
-        await fs.promises.unlink(AI_PID_LOCK_PATH);
-      }
-    } catch (err) {
-      console.error('Error during PID lock release:', err);
-    } finally {
-      this.isOwner = false;
-      this.ownerToken = null;
-    }
+    await new Promise<void>((resolve) => {
+      s.close(() => {
+        resolve();
+      });
+    });
   }
 }

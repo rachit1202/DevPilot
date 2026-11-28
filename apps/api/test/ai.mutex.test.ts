@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import net from 'node:net';
+import cp from 'node:child_process';
 import { GenerationMutex } from '../src/modules/ai/generation.mutex';
 import { RecoveryMarkerManager } from '../src/modules/ai/recovery.marker';
 import { ResetMutex } from '../src/modules/ai/reset.mutex';
@@ -7,7 +9,7 @@ import { getCanonicalStorageDir } from '../src/modules/ai/storage.util';
 
 async function runMutexUnitTests() {
   console.log('\n======================================================');
-  console.log('  M2.2.1 Unit Tests: Mutex, Concurrency & Storage');
+  console.log('  M2.3.5.2.11.1 Unit Tests: Kernel Socket Ownership & Mutex');
   console.log('======================================================\n');
 
   let passed = 0;
@@ -31,9 +33,70 @@ async function runMutexUnitTests() {
     assert.ok(!dir.includes('apps\\storage'), `Storage dir should not be in apps/storage: ${dir}`);
   });
 
-  // Acquire PID lock for test process
+  // Acquire kernel socket ownership for test process
   await PidLockManager.acquireOwnership();
-  assert.equal(PidLockManager.isEngineOwner(), true, 'Test process should acquire PID ownership');
+  assert.equal(PidLockManager.isEngineOwner(), true, 'Test process should acquire socket ownership');
+  assert.ok(PidLockManager.getOwnerToken(), 'Test process should have non-null ownerToken');
+
+  // Verify second bind collision returns EADDRINUSE conflict
+  await test('Second concurrent process / bind attempt receives ownership conflict', async () => {
+    // Attempt raw bind on the same AI_LOCK_PORT
+    await new Promise<void>((resolve, reject) => {
+      const s = net.createServer();
+      s.on('error', (err: any) => {
+        try {
+          assert.equal(err.code, 'EADDRINUSE');
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      s.listen(54321, '127.0.0.1', () => {
+        s.close();
+        reject(new Error('Second server should not have bound'));
+      });
+    });
+  });
+
+  // Verify child-process abrupt termination releases port immediately
+  await test('Abrupt child-process termination releases port automatically', async () => {
+    const testPort = 54329;
+    const child = cp.spawn(process.execPath, [
+      '-e',
+      `const net = require("net"); const s = net.createServer().listen(${testPort}, "127.0.0.1", () => console.log("CHILD_BOUND"));`
+    ], { stdio: ['inherit', 'pipe', 'inherit'] });
+
+    await new Promise<void>((resolve, reject) => {
+      child.stdout.on('data', async (d) => {
+        if (d.toString().includes('CHILD_BOUND')) {
+          // Verify port is occupied
+          const s = net.createServer();
+          s.on('error', (err: any) => {
+            assert.equal(err.code, 'EADDRINUSE');
+            // Abruptly kill child
+            child.kill('SIGKILL');
+            
+            // Give kernel a brief tick to close fd
+            setTimeout(async () => {
+              try {
+                const s2 = net.createServer();
+                await new Promise<void>((res2, rej2) => {
+                  s2.on('error', rej2);
+                  s2.listen(testPort, '127.0.0.1', () => {
+                    s2.close(() => res2());
+                  });
+                });
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            }, 50);
+          });
+          s.listen(testPort, '127.0.0.1');
+        }
+      });
+    });
+  });
 
   // Clean any markers before testing
   await RecoveryMarkerManager.purgeAllMarkers();
@@ -125,8 +188,9 @@ async function runMutexUnitTests() {
     ResetMutex.release(key2);
   });
 
-  // Release PID ownership on finish
+  // Release socket ownership on finish
   await PidLockManager.releaseOwnership();
+  assert.equal(PidLockManager.isEngineOwner(), false, 'Ownership should be false after release');
 
   console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) process.exit(1);

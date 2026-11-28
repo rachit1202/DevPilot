@@ -38,7 +38,6 @@ export default defineConfig({
   reporter: 'list',
   use: {
     baseURL: 'http://localhost:3000',
-    channel: 'chrome',
     headless: true,
     screenshot: 'only-on-failure',
     trace: 'off',
@@ -47,10 +46,12 @@ export default defineConfig({
     {
       command: 'node --env-file=.env apps/api/dist/index.js',
       url: 'http://localhost:4000/api/v1/health',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       env: {
         AUTH_RATE_LIMIT_MAX: '100',
         RATE_LIMIT_MAX: '500',
+        STORAGE_DIR: './storage/test-e2e',
+        AI_LOCK_PORT: '54322',
       },
       stdout: 'pipe',
       stderr: 'pipe',

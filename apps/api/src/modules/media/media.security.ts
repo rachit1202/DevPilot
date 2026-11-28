@@ -2,21 +2,12 @@ import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
 
+import { getCanonicalUploadsDir } from '../ai/storage.util';
+
 export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB strict limit for image assets
 
-function resolveUploadDir(): string {
-  // Check if storage directory exists at current working directory (monorepo root)
-  if (fs.existsSync(path.resolve(process.cwd(), 'storage'))) {
-    return path.resolve(process.cwd(), 'storage', 'uploads');
-  }
-  // Fallback for commands run directly inside apps/api workspace
-  if (fs.existsSync(path.resolve(process.cwd(), '..', '..', 'storage'))) {
-    return path.resolve(process.cwd(), '..', '..', 'storage', 'uploads');
-  }
-  return path.resolve(process.cwd(), 'storage', 'uploads');
-}
-
-export const UPLOAD_DIR = resolveUploadDir();
+// Authoritative uploads directory derived deterministically from the canonical storage root
+export const UPLOAD_DIR = getCanonicalUploadsDir();
 
 export const ALLOWED_MIME_TYPES: Record<string, string[]> = {
   'image/jpeg': ['.jpg', '.jpeg'],
@@ -127,11 +118,13 @@ export function generateSecureFileName(mimeType: string): string {
  * Prevents directory traversal attacks by verifying the resolved target path
  * remains strictly within the storage uploads root directory.
  */
-export function assertSafeStoragePath(resolvedPath: string): void {
-  const normalizedTarget = path.normalize(resolvedPath);
-  const normalizedBase = path.normalize(UPLOAD_DIR);
+export function assertSafeStoragePath(resolvedPath: string, baseDir: string = UPLOAD_DIR): void {
+  const normalizedTarget = path.normalize(path.resolve(resolvedPath));
+  const normalizedBase = path.normalize(path.resolve(baseDir));
 
-  if (!normalizedTarget.startsWith(normalizedBase)) {
+  const baseWithSep = normalizedBase.endsWith(path.sep) ? normalizedBase : `${normalizedBase}${path.sep}`;
+
+  if (normalizedTarget !== normalizedBase && !normalizedTarget.startsWith(baseWithSep)) {
     throw new Error('SECURITY VIOLATION: Path traversal detected. Access denied.');
   }
 }

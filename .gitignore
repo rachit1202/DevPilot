@@ -29,6 +29,9 @@ storage/uploads/*
 !storage/uploads/.gitkeep
 storage/thumbnails/*
 !storage/thumbnails/.gitkeep
+storage/test-e2e/
+storage/*.pid
+storage/*.lock
 apps/api/storage/
 
 # System & IDE files
